@@ -1111,17 +1111,25 @@ document.addEventListener('alpine:init', () => {
       if (!this.isAdmin || !match) return;
       if (!confirm('Изтрий live резултата за този мач?')) return;
       const key = match.key;
-      // optimistic local
+      // Optimistic local removal
       const ll = { ...this.live };
       delete ll[key];
       this.live = ll;
+      // Belt-and-suspenders: explicit localStorage write so a refresh
+      // before $watch fires doesn't resurrect the entry from local cache
+      this.persistLocal();
       if (this.backendMode !== 'api') return;
       try {
-        await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
+        const r = await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
           method: 'DELETE',
           headers: { 'X-Admin-Password': this._adminPassword || '' }
         });
-      } catch (e) {}
+        if (!r.ok) {
+          this.showToast('⚠️ Грешка при изтриване на live');
+        }
+      } catch (e) {
+        this.showToast('⚠️ Мрежова грешка при изтриване на live');
+      }
     },
 
     _recoverLocalLive() {
@@ -1133,6 +1141,11 @@ document.addEventListener('alpine:init', () => {
       } catch (e) { return; }
       const localLive = local && local.live;
       if (!localLive) return;
+      // Only recover entries written in the last 30 seconds — anything older
+      // would have been persisted to server already; if the server doesn't
+      // have it now, it was deliberately deleted (admin clear / finalize).
+      const RECOVERY_WINDOW_MS = 30 * 1000;
+      const now = Date.now();
       const merged = { ...this.live };
       const toResend = [];
       for (const k in localLive) {
@@ -1142,7 +1155,7 @@ document.addEventListener('alpine:init', () => {
         if (!loc) continue;
         const sT = srv && srv.updatedAt ? Date.parse(srv.updatedAt) : 0;
         const lT = loc.updatedAt ? Date.parse(loc.updatedAt) : 0;
-        if (lT > sT) {
+        if (lT > sT && (now - lT) < RECOVERY_WINDOW_MS) {
           merged[k] = loc;
           toResend.push([k, loc]);
         }
