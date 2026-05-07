@@ -49,10 +49,18 @@ document.addEventListener('alpine:init', () => {
     saveStatus: '',  // '', 'saving', 'saved', 'error'
     apiBase: '/api',
 
+    // ===== Derived state (recomputed only when results/schedule change) =====
+    matches: [],
+    matchByPair: {},
+    playedMatches: [],
+    scheduledMatches: [],
+    standings: [],
+
     // ======= INIT =======
     async init() {
       await this.detectBackend();
       await this.load();
+      this.recomputeDerived();
 
       // Auto-restore admin auth from localStorage (admin device only)
       const savedPass = localStorage.getItem('tennis-admin-pw');
@@ -66,13 +74,78 @@ document.addEventListener('alpine:init', () => {
         }
       }
 
-      // Persist on changes
-      this.$watch('results', () => this.persist());
-      this.$watch('schedule', () => this.persist());
+      // Persist + recompute on changes
+      this.$watch('results', () => { this.recomputeDerived(); this.persist(); });
+      this.$watch('schedule', () => { this.recomputeDerived(); this.persist(); });
       this.$watch('passwordHash', () => this.persistLocal());
 
       // Reset scroll on tab change
       this.$watch('view', () => window.scrollTo(0, 0));
+    },
+
+    recomputeDerived() {
+      // Build matches array
+      const matches = MATCHES_SEED.map((m, i) => {
+        const key = m[0] + '|' + m[1];
+        const r = this.results[key];
+        const sched = this.schedule[key];
+        let s1 = null, s2 = null, played = false, winner = null, loser = null;
+        if (r) {
+          s1 = r[0]; s2 = r[1];
+          played = true;
+          if (s1 > s2) { winner = m[0]; loser = m[1]; }
+          else { winner = m[1]; loser = m[0]; }
+        }
+        return {
+          num: i + 1, key,
+          p1: m[0], p2: m[1],
+          s1, s2, played, winner, loser,
+          scheduledAt: sched || null
+        };
+      });
+
+      // Lookup map for O(1) matchBetween
+      const byPair = {};
+      for (const m of matches) {
+        byPair[m.p1 + '|' + m.p2] = m;
+        byPair[m.p2 + '|' + m.p1] = m;
+      }
+
+      const playedMatches = matches.filter(m => m.played);
+      const scheduledMatches = matches
+        .filter(m => !m.played && m.scheduledAt)
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+
+      // Standings
+      const stats = {};
+      PLAYERS.forEach(p => stats[p] = {
+        name: p, played: 0, wins: 0, losses: 0,
+        setsWon: 0, setsLost: 0, points: 0
+      });
+      for (const m of matches) {
+        if (!m.played) continue;
+        const a = stats[m.p1], b = stats[m.p2];
+        a.played++; b.played++;
+        a.setsWon += m.s1; a.setsLost += m.s2;
+        b.setsWon += m.s2; b.setsLost += m.s1;
+        if (m.winner === m.p1) { a.wins++; a.points++; b.losses++; }
+        else { b.wins++; b.points++; a.losses++; }
+      }
+      const standings = Object.values(stats).sort((x, y) => {
+        if (y.points !== x.points) return y.points - x.points;
+        if (y.wins !== x.wins) return y.wins - x.wins;
+        const dx = x.setsWon - x.setsLost;
+        const dy = y.setsWon - y.setsLost;
+        if (dy !== dx) return dy - dx;
+        if (y.setsWon !== x.setsWon) return y.setsWon - x.setsWon;
+        return x.name.localeCompare(y.name, 'bg');
+      });
+
+      this.matches = matches;
+      this.matchByPair = byPair;
+      this.playedMatches = playedMatches;
+      this.scheduledMatches = scheduledMatches;
+      this.standings = standings;
     },
 
     async detectBackend() {
@@ -173,63 +246,6 @@ document.addEventListener('alpine:init', () => {
     // ======= COMPUTED =======
     get players() { return PLAYERS; },
 
-    get matches() {
-      return MATCHES_SEED.map((m, i) => {
-        const key = m[0] + '|' + m[1];
-        const r = this.results[key];
-        const sched = this.schedule[key];
-        let s1 = null, s2 = null, played = false, winner = null, loser = null;
-        if (r) {
-          s1 = r[0]; s2 = r[1];
-          played = true;
-          if (s1 > s2) { winner = m[0]; loser = m[1]; }
-          else { winner = m[1]; loser = m[0]; }
-        }
-        return {
-          num: i + 1, key,
-          p1: m[0], p2: m[1],
-          s1, s2, played, winner, loser,
-          scheduledAt: sched || null
-        };
-      });
-    },
-
-    get playedMatches() { return this.matches.filter(m => m.played); },
-
-    get scheduledMatches() {
-      return this.matches
-        .filter(m => !m.played && m.scheduledAt)
-        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
-    },
-
-    get standings() {
-      const stats = {};
-      PLAYERS.forEach(p => stats[p] = {
-        name: p, played: 0, wins: 0, losses: 0,
-        setsWon: 0, setsLost: 0, points: 0
-      });
-      this.matches.forEach(m => {
-        if (!m.played) return;
-        const a = stats[m.p1], b = stats[m.p2];
-        a.played++; b.played++;
-        a.setsWon += m.s1; a.setsLost += m.s2;
-        b.setsWon += m.s2; b.setsLost += m.s1;
-        if (m.winner === m.p1) { a.wins++; a.points++; b.losses++; }
-        else { b.wins++; b.points++; a.losses++; }
-      });
-      const arr = Object.values(stats);
-      arr.sort((x, y) => {
-        if (y.points !== x.points) return y.points - x.points;
-        if (y.wins !== x.wins) return y.wins - x.wins;
-        const dx = x.setsWon - x.setsLost;
-        const dy = y.setsWon - y.setsLost;
-        if (dy !== dx) return dy - dx;
-        if (y.setsWon !== x.setsWon) return y.setsWon - x.setsWon;
-        return x.name.localeCompare(y.name, 'bg');
-      });
-      return arr;
-    },
-
     get filteredMatches() {
       const q = this.matchSearch.trim().toLowerCase();
       const player = this.matchPlayerFilter;
@@ -306,9 +322,7 @@ document.addEventListener('alpine:init', () => {
 
     // ======= H2H GRID =======
     matchBetween(a, b) {
-      return this.matches.find(m =>
-        (m.p1 === a && m.p2 === b) || (m.p1 === b && m.p2 === a)
-      );
+      return this.matchByPair[a + '|' + b] || null;
     },
 
     cellClass(rowP, colP) {

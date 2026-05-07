@@ -157,7 +157,8 @@
     </section>
 
     <!-- ===== MATCHES ===== -->
-    <section class="panel" x-show="view === 'matches'">
+    <template x-if="view === 'matches'">
+    <section class="panel">
       <div class="panel-head">
         <h2>Мачове</h2>
         <p x-show="matchPlayerFilter">
@@ -253,9 +254,11 @@
         </div>
       </template>
     </section>
+    </template>
 
     <!-- ===== ДВУБОИ (H2H) ===== -->
-    <section class="panel" x-show="view === 'grid'">
+    <template x-if="view === 'grid'">
+    <section class="panel">
       <div class="panel-head">
         <h2>Двубои</h2>
         <p>Резултатите на всеки срещу всеки</p>
@@ -336,9 +339,11 @@
         <span class="legend-hint">Тапни име за подробности</span>
       </div>
     </section>
+    </template>
 
     <!-- ===== ADMIN ===== -->
-    <section class="panel" x-show="view === 'admin'">
+    <template x-if="view === 'admin'">
+    <section class="panel">
       <template x-if="!isAdmin">
         <div class="admin-locked">
           <div class="lock-icon">🔒</div>
@@ -463,6 +468,7 @@
         </div>
       </template>
     </section>
+    </template>
   </main>
 
   <!-- ===== BOTTOM NAV ===== -->
