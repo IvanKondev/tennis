@@ -353,8 +353,6 @@
             <input type="password" x-model="passwordInput" placeholder="Парола" autocomplete="current-password" required />
             <button type="submit" class="btn-primary full" x-text="needsPasswordSetup ? 'Задай парола' : 'Влез'"></button>
             <p class="error" x-show="passwordError" x-text="passwordError"></p>
-            <p class="hint" x-show="backendMode === 'api'">🌐 Сървърен режим — паролата се валидира на сървъра</p>
-            <p class="hint" x-show="backendMode === 'local'">📱 Локален режим — данните се пазят само в този браузър</p>
           </form>
         </div>
       </template>
