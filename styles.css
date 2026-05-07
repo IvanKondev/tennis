@@ -1801,17 +1801,38 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   justify-content: center;
 }
 .live-card-set {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 13px;
-  color: var(--text-dim);
   background: rgba(0,0,0,0.3);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 2px 8px;
   letter-spacing: 1px;
 }
-.live-card-set.w1 > span:first-child { color: var(--accent-2); font-weight: 700; }
-.live-card-set.w2 > span:last-child  { color: var(--accent-2); font-weight: 700; }
+.live-card-set-idx {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-faint);
+  background: rgba(0,0,0,0.4);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.live-card-set-num {
+  font-size: 14px;
+  color: var(--text-faint);
+  min-width: 0.7ch;
+  text-align: center;
+}
+.live-card-set-num.won {
+  color: var(--accent-2);
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(212, 175, 55, 0.4);
+}
+.live-card-set-mid { color: var(--text-faint); font-size: 12px; }
 
 .live-card-tb {
   font-size: 11px;
@@ -2069,13 +2090,12 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   font-weight: 700;
 }
 
-/* Sets summary — single inline strip */
+/* Sets summary — full row per set, winner side strongly highlighted */
 .live-sets-summary {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   background: var(--bg-2);
   border-bottom: 1px solid var(--line);
 }
@@ -2084,37 +2104,90 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-right: 4px;
+  letter-spacing: 1.5px;
+  margin-bottom: 2px;
 }
-.live-set-pill {
-  display: inline-flex;
+.live-set-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+.live-set-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  background: rgba(0,0,0,0.3);
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.live-set-pair {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
   background: var(--bg-1);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 0;
+}
+.live-set-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  min-width: 0;
+}
+.live-set-side.right { justify-content: flex-end; }
+.live-set-side.won {
+  background: linear-gradient(180deg, rgba(212,175,55,0.18), rgba(212,175,55,0.08));
+  border-color: rgba(212,175,55,0.4);
+  box-shadow: 0 0 16px rgba(212,175,55,0.12);
+}
+.live-set-name {
   font-size: 12px;
-  color: var(--text);
+  color: var(--text-2);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
-.live-set-pill.w1 { border-color: rgba(212,175,55,0.35); }
-.live-set-pill.w2 { border-color: rgba(212,175,55,0.35); }
-.live-set-idx {
-  color: var(--text-faint);
-  font-size: 10px;
-  background: rgba(0,0,0,0.3);
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-.live-set-score {
+.live-set-side.right .live-set-name { text-align: right; }
+.live-set-side.won .live-set-name { color: var(--text); }
+.live-set-num-big {
   font-family: 'Bebas Neue', sans-serif;
-  font-size: 15px;
+  font-size: 22px;
+  color: var(--text-faint);
+  line-height: 1;
   letter-spacing: 1px;
+  flex-shrink: 0;
 }
-.live-set-pill.w1 .live-set-score > span:first-child { color: var(--accent-2); font-weight: 700; }
-.live-set-pill.w2 .live-set-score > span:last-child  { color: var(--accent-2); font-weight: 700; }
-.live-set-colon { color: var(--text-faint); margin: 0 1px; }
+.live-set-side.won .live-set-num-big {
+  color: var(--accent-2);
+  font-weight: 700;
+  text-shadow: 0 0 12px rgba(212,175,55,0.3);
+}
+.live-set-mid {
+  color: var(--text-faint);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  line-height: 1;
+}
+.live-set-side .avatar.xs {
+  width: 22px;
+  height: 22px;
+  font-size: 9px;
+  flex-shrink: 0;
+}
 
 .live-mode-label {
   text-align: center;

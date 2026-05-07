@@ -3,8 +3,33 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0" />
-<meta name="theme-color" content="#ffffff" />
-<title>Тенис Лига Велинград</title>
+<meta name="theme-color" content="#0e1c14" />
+<title>Тенис Лига Велинград · Сезон 2026</title>
+<meta name="description" content="Любителска тенис лига Велинград — всеки срещу всеки, до 2 спечелени сета. Live резултати в реално време." />
+
+<!-- Open Graph / iMessage / Telegram / FB -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Тенис Лига Велинград" />
+<meta property="og:title" content="Тенис Лига Велинград · Сезон 2026" />
+<meta property="og:description" content="Всеки срещу всеки · до 2 спечелени сета · 20 играчи · live резултати" />
+<meta property="og:url" content="https://tennis.unrealsoft.bg/" />
+<meta property="og:image" content="https://tennis.unrealsoft.bg/og.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Тенис Лига Велинград — Сезон 2026" />
+<meta property="og:locale" content="bg_BG" />
+
+<!-- Twitter / X -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Тенис Лига Велинград · Сезон 2026" />
+<meta name="twitter:description" content="Всеки срещу всеки · до 2 спечелени сета · live резултати" />
+<meta name="twitter:image" content="https://tennis.unrealsoft.bg/og.png" />
+
+<!-- Icons -->
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
@@ -62,8 +87,11 @@
                   <template x-if="liveOf(m) && liveOf(m).sets && liveOf(m).sets.length > 0">
                     <div class="live-card-sets-strip">
                       <template x-for="(s, i) in liveOf(m).sets" :key="i">
-                        <span class="live-card-set" :class="{w1: s[0]>s[1], w2: s[1]>s[0]}">
-                          <span x-text="s[0]"></span>:<span x-text="s[1]"></span>
+                        <span class="live-card-set">
+                          <span class="live-card-set-idx" x-text="i+1"></span>
+                          <span class="live-card-set-num" :class="{won: s[0]>s[1]}" x-text="s[0]"></span>
+                          <span class="live-card-set-mid">:</span>
+                          <span class="live-card-set-num" :class="{won: s[1]>s[0]}" x-text="s[1]"></span>
                         </span>
                       </template>
                     </div>
@@ -860,16 +888,26 @@
             <div style="width:36px"></div>
           </div>
 
-          <!-- Sets summary (dark) -->
+          <!-- Sets summary — full row per set, winner side highlighted -->
           <div class="live-sets-summary" x-show="liveDraft.sets.length > 0">
-            <span class="live-sets-label">Сетове</span>
+            <div class="live-sets-label">Изиграни сетове</div>
             <template x-for="(s, i) in liveDraft.sets" :key="i">
-              <span class="live-set-pill" :class="{w1: s[0]>s[1], w2: s[1]>s[0]}">
-                <span class="live-set-idx" x-text="i+1"></span>
-                <span class="live-set-score">
-                  <span x-text="s[0]"></span><span class="live-set-colon">:</span><span x-text="s[1]"></span>
-                </span>
-              </span>
+              <div class="live-set-row">
+                <span class="live-set-num">Сет <span x-text="i+1"></span></span>
+                <div class="live-set-pair">
+                  <div class="live-set-side" :class="{won: s[0]>s[1]}">
+                    <span class="avatar xs" :style="`--avatar-hue:${playerHue(liveMatch.p1)}`" x-text="initials(liveMatch.p1)"></span>
+                    <span class="live-set-name" x-text="liveMatch.p1"></span>
+                    <span class="live-set-num-big" x-text="s[0]"></span>
+                  </div>
+                  <span class="live-set-mid">:</span>
+                  <div class="live-set-side right" :class="{won: s[1]>s[0]}">
+                    <span class="live-set-num-big" x-text="s[1]"></span>
+                    <span class="live-set-name" x-text="liveMatch.p2"></span>
+                    <span class="avatar xs" :style="`--avatar-hue:${playerHue(liveMatch.p2)}`" x-text="initials(liveMatch.p2)"></span>
+                  </div>
+                </div>
+              </div>
             </template>
           </div>
 

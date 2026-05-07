@@ -7,3 +7,4 @@ data/
 Thumbs.db
 *.tmp
 *.bak
+.claude/
