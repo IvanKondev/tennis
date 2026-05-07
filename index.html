@@ -17,36 +17,20 @@
   <!-- Toast (auto-refresh notifications) -->
   <div class="toast" x-show="toast" x-transition.opacity x-text="toast"></div>
 
-  <!-- HERO (only on standings) -->
+  <!-- HERO (compact, only on standings) -->
   <header class="hero" x-show="view === 'standings'">
-    <div class="hero-inner">
-      <div class="badge">
-        <span class="ball-dot"></span>
-        <span>Сезон 2026 · Всеки срещу всеки</span>
-      </div>
-      <h1>
-        <span class="line-1">Тенис Лига</span>
-        <span class="line-2">Велинград</span>
-      </h1>
-      <p class="tagline">Победителят взема <b>1 точка</b>. Мачовете се играят до 2 спечелени сета.</p>
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-value" x-text="players.length"></div>
-          <div class="stat-label">Играчи</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" x-text="playedMatches.length"></div>
-          <div class="stat-label">Изиграни</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" x-text="scheduledMatches.length"></div>
-          <div class="stat-label">Планирани</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" x-text="Math.round(playedMatches.length / matches.length * 100) + '%'"></div>
-          <div class="stat-label">Прогрес</div>
-        </div>
-      </div>
+    <h1 class="hero-title">
+      <span class="line-1">Тенис Лига</span>
+      <span class="line-2">Велинград</span>
+    </h1>
+    <div class="hero-stats">
+      <span><b x-text="players.length"></b> играчи</span>
+      <span class="hero-sep">·</span>
+      <span><b x-text="playedMatches.length"></b>/<span x-text="matches.length"></span> мача</span>
+      <span class="hero-sep">·</span>
+      <span><b x-text="scheduledMatches.length"></b> планирани</span>
+      <span class="hero-sep">·</span>
+      <span><b x-text="Math.round(playedMatches.length / matches.length * 100) + '%'"></b></span>
     </div>
   </header>
 

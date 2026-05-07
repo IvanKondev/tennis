@@ -89,6 +89,9 @@ document.addEventListener('alpine:init', () => {
       // Persist + recompute on changes
       this.$watch('results', () => { this.recomputeDerived(); this.persist(); });
       this.$watch('schedule', () => { this.recomputeDerived(); this.persist(); });
+      // Live state: localStorage only (server is updated via dedicated endpoint).
+      // Without this, refreshing in local mode loses any in-progress live score.
+      this.$watch('live', () => this.persistLocal());
       this.$watch('passwordHash', () => this.persistLocal());
 
       // Reset scroll on tab change
@@ -186,6 +189,10 @@ document.addEventListener('alpine:init', () => {
             this.results = data.results || {};
             this.schedule = data.schedule || {};
             this.live = data.live || {};
+
+            // Recover live state where local is newer than server's
+            // (e.g. user added a game but POST didn't reach server before refresh)
+            this._recoverLocalLive();
             return;
           }
         } catch (e) {}
@@ -240,7 +247,8 @@ document.addEventListener('alpine:init', () => {
           },
           body: JSON.stringify({
             results: this.results,
-            schedule: this.schedule
+            schedule: this.schedule,
+            live: this.live
           })
         });
         if (!r.ok) throw new Error('save failed: ' + r.status);
@@ -1043,7 +1051,8 @@ document.addEventListener('alpine:init', () => {
     async persistLive() {
       if (!this.liveMatch) return;
       const key = this.liveMatch.key;
-      // optimistic local update
+      // optimistic local update + immediate localStorage save
+      // (so a refresh before POST completes still recovers the state)
       const newLive = { ...this.live };
       newLive[key] = {
         sets: this.liveDraft.sets.map(s => [s[0], s[1]]),
@@ -1052,6 +1061,7 @@ document.addEventListener('alpine:init', () => {
         updatedAt: new Date().toISOString()
       };
       this.live = newLive;
+      this.persistLocal();
 
       if (this.backendMode !== 'api') return;
       this.livePending = true;
@@ -1110,6 +1120,48 @@ document.addEventListener('alpine:init', () => {
         await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
           method: 'DELETE',
           headers: { 'X-Admin-Password': this._adminPassword || '' }
+        });
+      } catch (e) {}
+    },
+
+    _recoverLocalLive() {
+      let local;
+      try {
+        const raw = localStorage.getItem('tennis-v1');
+        if (!raw) return;
+        local = JSON.parse(raw);
+      } catch (e) { return; }
+      const localLive = local && local.live;
+      if (!localLive) return;
+      const merged = { ...this.live };
+      const toResend = [];
+      for (const k in localLive) {
+        if (this.results[k]) continue;  // server has it as finalized
+        const srv = merged[k];
+        const loc = localLive[k];
+        if (!loc) continue;
+        const sT = srv && srv.updatedAt ? Date.parse(srv.updatedAt) : 0;
+        const lT = loc.updatedAt ? Date.parse(loc.updatedAt) : 0;
+        if (lT > sT) {
+          merged[k] = loc;
+          toResend.push([k, loc]);
+        }
+      }
+      if (toResend.length) {
+        this.live = merged;
+        toResend.forEach(([k, ent]) => this._resendLive(k, ent));
+      }
+    },
+
+    async _resendLive(key, ent) {
+      if (this.backendMode !== 'api') return;
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this._adminPassword) headers['X-Admin-Password'] = this._adminPassword;
+        await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ sets: ent.sets, cur: ent.cur, tb: ent.tb })
         });
       } catch (e) {}
     },
