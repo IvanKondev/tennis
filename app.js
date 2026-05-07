@@ -48,6 +48,10 @@ document.addEventListener('alpine:init', () => {
     backendMode: 'local',
     saveStatus: '',  // '', 'saving', 'saved', 'error'
     apiBase: '/api',
+    toast: '',
+    _dataETag: null,
+    _pollInterval: null,
+    _fromServer: false,
 
     // ===== Derived state (recomputed only when results/schedule change) =====
     matches: [],
@@ -81,6 +85,9 @@ document.addEventListener('alpine:init', () => {
 
       // Reset scroll on tab change
       this.$watch('view', () => window.scrollTo(0, 0));
+
+      // Start polling for server-side changes
+      this.startAutoRefresh();
     },
 
     recomputeDerived() {
@@ -166,6 +173,7 @@ document.addEventListener('alpine:init', () => {
         try {
           const r = await fetch(this.apiBase + '/data', { cache: 'no-store' });
           if (r.ok) {
+            this._dataETag = r.headers.get('etag');
             const data = await r.json();
             this.results = data.results || {};
             this.schedule = data.schedule || {};
@@ -205,6 +213,8 @@ document.addEventListener('alpine:init', () => {
     },
 
     async persist() {
+      // If state was just updated from server, skip writing it back
+      if (this._fromServer) return;
       this.persistLocal();
       if (this.backendMode !== 'api') return;
       if (!this._adminPassword) return;
@@ -222,12 +232,82 @@ document.addEventListener('alpine:init', () => {
           })
         });
         if (!r.ok) throw new Error('save failed: ' + r.status);
+        // Update our ETag so the next poll won't think this is "new"
+        const etag = r.headers.get('etag');
+        if (etag) this._dataETag = etag;
         this.saveStatus = 'saved';
         setTimeout(() => { if (this.saveStatus === 'saved') this.saveStatus = ''; }, 2000);
       } catch (e) {
         this.saveStatus = 'error';
         console.error('[persist]', e);
       }
+    },
+
+    // ======= AUTO-REFRESH =======
+    startAutoRefresh() {
+      if (this.backendMode !== 'api') return;
+      if (this._pollInterval) return;
+
+      const tick = () => this.pollForUpdates();
+
+      // Poll every 25s
+      this._pollInterval = setInterval(() => {
+        if (document.hidden) return;
+        tick();
+      }, 25000);
+
+      // Refresh once on tab focus
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) tick();
+      });
+    },
+
+    isUserBusy() {
+      // Don't disturb if a modal/wizard is active
+      return !!(this.scoreMatch || this.scheduleMatch ||
+                this.wizard.open || this.playerPicker.open ||
+                this.saveStatus === 'saving');
+    },
+
+    async pollForUpdates() {
+      if (this.isUserBusy()) return;
+      try {
+        const headers = {};
+        if (this._dataETag) headers['If-None-Match'] = this._dataETag;
+        const r = await fetch(this.apiBase + '/data', { headers, cache: 'no-store' });
+        if (r.status === 304) return;       // no changes — zero body
+        if (!r.ok) return;
+        const newETag = r.headers.get('etag');
+        const data = await r.json();
+
+        // Compute diff to detect actual changes (vs ETag false positive)
+        const newR = JSON.stringify(data.results || {});
+        const newS = JSON.stringify(data.schedule || {});
+        const curR = JSON.stringify(this.results || {});
+        const curS = JSON.stringify(this.schedule || {});
+
+        if (newR === curR && newS === curS) {
+          this._dataETag = newETag;
+          return;
+        }
+
+        this._fromServer = true;
+        this.results = data.results || {};
+        this.schedule = data.schedule || {};
+        this._dataETag = newETag;
+        // Clear flag after watchers fire (microtask)
+        Promise.resolve().then(() => { this._fromServer = false; });
+
+        this.showToast('✨ Данните са обновени');
+      } catch (e) {
+        // Silent fail — try again next tick
+      }
+    },
+
+    showToast(msg) {
+      this.toast = msg;
+      clearTimeout(this._toastTimer);
+      this._toastTimer = setTimeout(() => { this.toast = ''; }, 3000);
     },
 
     async verifyApiPassword(password) {

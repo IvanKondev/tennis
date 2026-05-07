@@ -72,6 +72,13 @@ function readData() {
   catch (e) { return { results: {}, schedule: {} }; }
 }
 
+function dataETag() {
+  try {
+    const s = fs.statSync(DATA_FILE);
+    return '"' + s.mtimeMs.toString(36) + '-' + s.size.toString(36) + '"';
+  } catch (e) { return '"empty"'; }
+}
+
 function writeData(data) {
   const tmp = DATA_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
@@ -149,7 +156,17 @@ const server = http.createServer(async (req, res) => {
 
     // ===== API =====
     if (url === '/api/data' && req.method === 'GET') {
-      return json(res, 200, readData());
+      const etag = dataETag();
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { 'ETag': etag });
+        return res.end();
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'ETag': etag,
+        'Cache-Control': 'no-cache'
+      });
+      return res.end(JSON.stringify(readData()));
     }
 
     if (url === '/api/data' && req.method === 'PUT') {
