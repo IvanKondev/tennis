@@ -70,6 +70,9 @@ document.addEventListener('alpine:init', () => {
       this.$watch('results', () => this.persist());
       this.$watch('schedule', () => this.persist());
       this.$watch('passwordHash', () => this.persistLocal());
+
+      // Reset scroll on tab change
+      this.$watch('view', () => window.scrollTo(0, 0));
     },
 
     async detectBackend() {
@@ -741,7 +744,7 @@ document.addEventListener('alpine:init', () => {
       this.matchSearch = '';
       this.matchFilter = 'all';
       this.view = 'matches';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // scroll handled by view watcher
     },
 
     // ======= EXPORT / IMPORT =======
