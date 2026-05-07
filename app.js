@@ -1166,11 +1166,14 @@ document.addEventListener('alpine:init', () => {
       } catch (e) {}
     },
 
-    // Today's matches that are not yet played (for the "today" banner)
+    // Today's matches that are not yet played AND not currently live
+    // (live ones get the big banner; we don't want to show them twice)
     get todaysMatches() {
       const t = this.todayISO();
       return this.matches.filter(m =>
-        !m.played && m.scheduledAt && m.scheduledAt.slice(0, 10) === t
+        !m.played &&
+        !this.live[m.key] &&
+        m.scheduledAt && m.scheduledAt.slice(0, 10) === t
       );
     },
 
