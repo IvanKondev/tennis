@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0" />
+<meta name="theme-color" content="#ffffff" />
+<title>Тенис Лига Велинград</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css" />
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js"></script>
+</head>
+<body x-data="tennisApp" x-cloak>
+
+  <!-- HERO (only on standings) -->
+  <header class="hero" x-show="view === 'standings'">
+    <div class="hero-inner">
+      <div class="badge">
+        <span class="ball-dot"></span>
+        <span>Сезон 2026 · Всеки срещу всеки</span>
+      </div>
+      <h1>
+        <span class="line-1">Тенис Лига</span>
+        <span class="line-2">Велинград</span>
+      </h1>
+      <p class="tagline">Победителят взема <b>1 точка</b>. Мачовете се играят до 2 спечелени сета.</p>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-value" x-text="players.length"></div>
+          <div class="stat-label">Играчи</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" x-text="playedMatches.length"></div>
+          <div class="stat-label">Изиграни</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" x-text="scheduledMatches.length"></div>
+          <div class="stat-label">Планирани</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value" x-text="Math.round(playedMatches.length / matches.length * 100) + '%'"></div>
+          <div class="stat-label">Прогрес</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ===== STANDINGS ===== -->
+    <section class="panel" x-show="view === 'standings'">
+      <!-- Podium -->
+      <template x-if="standings[0] && standings[0].played > 0">
+        <div class="podium">
+          <template x-if="standings[1]">
+            <div class="podium-spot p2" @click="jumpToPlayer(standings[1].name)">
+              <div class="podium-medal">🥈</div>
+              <div class="avatar lg" :style="`--avatar-hue:${playerHue(standings[1].name)}`" x-text="initials(standings[1].name)"></div>
+              <div class="podium-name" x-text="standings[1].name"></div>
+              <div class="podium-points"><span x-text="standings[1].points"></span> т.</div>
+            </div>
+          </template>
+          <div class="podium-spot p1" @click="jumpToPlayer(standings[0].name)">
+            <div class="podium-crown">👑</div>
+            <div class="podium-medal">🥇</div>
+            <div class="avatar xl" :style="`--avatar-hue:${playerHue(standings[0].name)}`" x-text="initials(standings[0].name)"></div>
+            <div class="podium-name" x-text="standings[0].name"></div>
+            <div class="podium-points"><span x-text="standings[0].points"></span> т.</div>
+          </div>
+          <template x-if="standings[2]">
+            <div class="podium-spot p3" @click="jumpToPlayer(standings[2].name)">
+              <div class="podium-medal">🥉</div>
+              <div class="avatar lg" :style="`--avatar-hue:${playerHue(standings[2].name)}`" x-text="initials(standings[2].name)"></div>
+              <div class="podium-name" x-text="standings[2].name"></div>
+              <div class="podium-points"><span x-text="standings[2].points"></span> т.</div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <div class="panel-head">
+        <h2>Класиране</h2>
+        <p>Точки → победи → разлика в сетове · <em>тапни играч за подробности</em></p>
+      </div>
+      <div class="standings-wrap">
+        <table class="standings">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th class="left">Играч</th>
+              <th class="hide-mobile">И</th>
+              <th>П</th>
+              <th class="hide-mobile">З</th>
+              <th>Сетове</th>
+              <th>Точки</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(s, i) in standings" :key="s.name">
+              <tr @click="jumpToPlayer(s.name)" class="clickable">
+                <td><span class="rank" :class="`rank-${i+1}`" x-text="i+1"></span></td>
+                <td class="player-cell">
+                  <span class="avatar" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                  <span class="player-name" x-text="s.name"></span>
+                </td>
+                <td class="hide-mobile" x-text="s.played"></td>
+                <td x-text="s.wins"></td>
+                <td class="hide-mobile" x-text="s.losses"></td>
+                <td class="sets"><span x-text="s.setsWon"></span>:<span x-text="s.setsLost"></span></td>
+                <td class="points" x-text="s.points"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== UPCOMING ===== -->
+    <section class="panel" x-show="view === 'upcoming'">
+      <div class="panel-head">
+        <h2>Предстоящи</h2>
+        <p>Планирани мачове по дата</p>
+      </div>
+      <template x-if="scheduledMatches.length === 0">
+        <div class="empty-state">
+          <div class="empty-icon">📅</div>
+          <h3>Няма планирани мачове</h3>
+          <p>Админът може да планира мачове от админ панела.</p>
+        </div>
+      </template>
+      <div class="upcoming-list">
+        <template x-for="m in scheduledMatches" :key="m.key">
+          <div class="upcoming-card">
+            <div class="upcoming-date-row">
+              <div class="upcoming-date">
+                <span x-text="formatDateLong(m.scheduledAt)"></span>
+              </div>
+              <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
+            </div>
+            <div class="upcoming-vs">
+              <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
+                <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                <span class="upcoming-name" x-text="m.p1"></span>
+              </div>
+              <div class="upcoming-vs-sep">VS</div>
+              <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
+                <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                <span class="upcoming-name" x-text="m.p2"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <!-- ===== MATCHES ===== -->
+    <section class="panel" x-show="view === 'matches'">
+      <div class="panel-head">
+        <h2>Мачове</h2>
+        <p x-show="matchPlayerFilter">
+          Показване на мачовете на <strong x-text="matchPlayerFilter"></strong>
+          <button class="link-btn" @click="matchPlayerFilter=''">✕ махни филтъра</button>
+        </p>
+      </div>
+
+      <div class="filters sticky-filters">
+        <button type="button" class="select-trigger"
+          @click="openPlayerPicker(name => matchPlayerFilter = name || '', { title: 'Филтър по играч' })">
+          <span class="select-trigger-label">
+            <template x-if="matchPlayerFilter">
+              <span class="select-trigger-current">
+                <span class="avatar sm" :style="`--avatar-hue:${playerHue(matchPlayerFilter)}`" x-text="initials(matchPlayerFilter)"></span>
+                <span x-text="matchPlayerFilter"></span>
+              </span>
+            </template>
+            <template x-if="!matchPlayerFilter">
+              <span class="select-trigger-placeholder">👥 Всички играчи</span>
+            </template>
+          </span>
+          <span class="select-arrow">▾</span>
+        </button>
+
+        <div class="chip-row scrollable">
+          <button class="chip" :class="{active: matchFilter==='all'}" @click="matchFilter='all'">Всички</button>
+          <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">✓ Изиграни</button>
+          <button class="chip" :class="{active: matchFilter==='upcoming'}" @click="matchFilter='upcoming'">📅 Предстоящи</button>
+        </div>
+
+        <input type="search" x-model="matchSearch" placeholder="🔍 Търси играч..." />
+      </div>
+
+      <template x-if="groupedMatches.length === 0">
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <h3>Няма намерени мачове</h3>
+          <p>Опитай с друго търсене.</p>
+        </div>
+      </template>
+
+      <template x-for="g in groupedMatches" :key="g.player">
+        <div class="match-group">
+          <div class="match-group-head" @click="jumpToPlayer(g.player)">
+            <span class="avatar sm" :style="`--avatar-hue:${playerHue(g.player)}`" x-text="initials(g.player)"></span>
+            <span class="match-group-name" x-text="g.player"></span>
+            <span class="match-group-count">
+              <span x-text="g.matches.filter(m=>m.played).length"></span> /
+              <span x-text="g.matches.length"></span>
+            </span>
+          </div>
+          <div class="match-group-list">
+            <template x-for="m in g.matches" :key="m.key">
+              <div class="match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt}">
+                <div class="match-top">
+                  <span class="match-num">#<span x-text="m.num"></span></span>
+                  <template x-if="!m.played && m.scheduledAt">
+                    <span class="match-date">📅 <span x-text="formatDate(m.scheduledAt)"></span></span>
+                  </template>
+                  <template x-if="m.played">
+                    <span class="match-status played">✓ Изигран</span>
+                  </template>
+                  <template x-if="!m.played && !m.scheduledAt">
+                    <span class="match-status pending">Чака</span>
+                  </template>
+                </div>
+                <div class="match-row">
+                  <div class="match-player" :class="m.played ? (m.winner===m.p1 ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(m.p1)">
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                    <span class="name" x-text="m.p1"></span>
+                  </div>
+                  <div class="match-score">
+                    <template x-if="m.played">
+                      <div>
+                        <span :class="m.s1>m.s2 ? 's-win' : 's-loss'" x-text="m.s1"></span>
+                        <span class="score-sep">:</span>
+                        <span :class="m.s2>m.s1 ? 's-win' : 's-loss'" x-text="m.s2"></span>
+                      </div>
+                    </template>
+                    <template x-if="!m.played">
+                      <span class="score-pending">vs</span>
+                    </template>
+                  </div>
+                  <div class="match-player right" :class="m.played ? (m.winner===m.p2 ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(m.p2)">
+                    <span class="name" x-text="m.p2"></span>
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- ===== ДВУБОИ (H2H) ===== -->
+    <section class="panel" x-show="view === 'grid'">
+      <div class="panel-head">
+        <h2>Двубои</h2>
+        <p>Резултатите на всеки срещу всеки</p>
+      </div>
+
+      <!-- MOBILE: vertical expandable cards -->
+      <div class="duels-mobile">
+        <template x-for="p in players" :key="p">
+          <div class="duel-card" :class="{open: duelExpanded === p}">
+            <button class="duel-card-head" @click="duelExpanded = duelExpanded === p ? null : p">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(p)}`" x-text="initials(p)"></span>
+              <div class="duel-card-info">
+                <span class="duel-card-name" x-text="p"></span>
+                <span class="duel-card-record">
+                  <span class="wl-w" x-text="h2hRowSummary(p).wins"></span><span class="wl-sep">-</span><span class="wl-l" x-text="h2hRowSummary(p).losses"></span>
+                  <span class="duel-card-points" x-text="playerPoints(p) + ' т.'"></span>
+                </span>
+              </div>
+              <span class="duel-card-arrow">▾</span>
+            </button>
+            <div class="duel-card-body" x-show="duelExpanded === p" x-transition.duration.200ms>
+              <template x-for="op in duelOpponents(p)" :key="op">
+                <div class="duel-row" :class="duelRowClass(p, op)" @click="jumpToPlayer(op)">
+                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(op)}`" x-text="initials(op)"></span>
+                  <span class="duel-row-name" x-text="op"></span>
+                  <span class="duel-row-result" x-text="duelRowText(p, op)"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- DESKTOP: full grid -->
+      <div class="grid-wrap desktop-only">
+        <table class="h2h">
+          <thead>
+            <tr>
+              <th class="corner"></th>
+              <template x-for="p in players" :key="p">
+                <th class="col-header" :title="p" x-text="p"></th>
+              </template>
+              <th class="col-summary-head">В-З</th>
+              <th class="col-summary-head total">Точки</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="rowP in players" :key="rowP">
+              <tr>
+                <th class="row-header" @click="jumpToPlayer(rowP)">
+                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(rowP)}`" x-text="initials(rowP)"></span>
+                  <span x-text="rowP"></span>
+                </th>
+                <template x-for="colP in players" :key="colP">
+                  <td :class="cellClass(rowP, colP)" x-text="cellText(rowP, colP)" :title="cellTitle(rowP, colP)"></td>
+                </template>
+                <td class="cell-wl">
+                  <span class="wl-w" x-text="h2hRowSummary(rowP).wins"></span><span class="wl-sep">-</span><span class="wl-l" x-text="h2hRowSummary(rowP).losses"></span>
+                </td>
+                <td class="cell-points" x-text="playerPoints(rowP)"></td>
+              </tr>
+            </template>
+            <tr class="summary-row">
+              <th class="row-header total">Точки</th>
+              <template x-for="colP in players" :key="colP">
+                <td class="cell-points" x-text="playerPoints(colP)"></td>
+              </template>
+              <td class="cell-self">—</td>
+              <td class="cell-self">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="legend desktop-only">
+        <span><span class="lg-mark lg-win"></span>Победа</span>
+        <span><span class="lg-mark lg-loss"></span>Загуба</span>
+        <span><span class="lg-mark lg-pending"></span>Предстоящ</span>
+        <span class="legend-hint">Тапни име за подробности</span>
+      </div>
+    </section>
+
+    <!-- ===== ADMIN ===== -->
+    <section class="panel" x-show="view === 'admin'">
+      <template x-if="!isAdmin">
+        <div class="admin-locked">
+          <div class="lock-icon">🔒</div>
+          <h2 x-text="needsPasswordSetup ? 'Първоначално настройване' : 'Заключено'"></h2>
+          <p x-text="needsPasswordSetup ? 'Задай нова парола за админ достъп' : 'Въведи администраторска парола'"></p>
+          <form @submit.prevent="submitPassword()" class="login-form">
+            <input type="password" x-model="passwordInput" placeholder="Парола" autocomplete="current-password" required />
+            <button type="submit" class="btn-primary full" x-text="needsPasswordSetup ? 'Задай парола' : 'Влез'"></button>
+            <p class="error" x-show="passwordError" x-text="passwordError"></p>
+            <p class="hint" x-show="backendMode === 'api'">🌐 Сървърен режим — паролата се валидира на сървъра</p>
+            <p class="hint" x-show="backendMode === 'local'">📱 Локален режим — данните се пазят само в този браузър</p>
+          </form>
+        </div>
+      </template>
+
+      <template x-if="isAdmin">
+        <div class="admin-panel">
+          <div class="admin-head">
+            <div>
+              <h2>Админ</h2>
+              <p class="admin-status">
+                <span class="dot"></span>
+                <span x-show="backendMode === 'api'">Сървър · </span>
+                <span x-show="backendMode === 'local'">Локално · </span>
+                <span x-show="!saveStatus">Активен</span>
+                <span x-show="saveStatus === 'saving'" class="status-saving">Запис...</span>
+                <span x-show="saveStatus === 'saved'" class="status-saved">✓ Запазено</span>
+                <span x-show="saveStatus === 'error'" class="status-error">✕ Грешка</span>
+              </p>
+            </div>
+            <div class="admin-tools">
+              <button class="btn-icon" @click="exportData()" title="Експорт">⬇</button>
+              <label class="btn-icon" title="Импорт">
+                ⬆<input type="file" accept=".json,application/json" @change="importData($event)" hidden />
+              </label>
+              <button class="btn-icon" @click="logout()" title="Изход">✕</button>
+            </div>
+          </div>
+
+          <!-- Quick actions -->
+          <div class="quick-actions">
+            <button class="quick-btn primary" @click="openWizard('schedule')">
+              <span class="quick-icon">📅</span>
+              <span class="quick-text">
+                <strong>Планирай мач</strong>
+                <small>Играч → опонент → дата → час</small>
+              </span>
+              <span class="quick-arrow">→</span>
+            </button>
+            <button class="quick-btn" @click="openWizard('result')">
+              <span class="quick-icon">🎾</span>
+              <span class="quick-text">
+                <strong>Запиши резултат</strong>
+                <small>Играч → опонент → резултат</small>
+              </span>
+              <span class="quick-arrow">→</span>
+            </button>
+          </div>
+
+          <div class="chip-row scrollable">
+            <button class="chip" :class="{active: matchFilter==='scheduled'}" @click="matchFilter='scheduled'">
+              📅 Планирани · <span x-text="scheduledMatches.length"></span>
+            </button>
+            <button class="chip" :class="{active: matchFilter==='pending'}" @click="matchFilter='pending'">
+              ⏳ Чакащи · <span x-text="matches.filter(m=>!m.played && !m.scheduledAt).length"></span>
+            </button>
+            <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">
+              ✓ Изиграни · <span x-text="playedMatches.length"></span>
+            </button>
+            <button class="chip" :class="{active: matchFilter==='all'}" @click="matchFilter='all'">
+              Всички
+            </button>
+          </div>
+
+          <input type="search" x-model="matchSearch" placeholder="🔍 Търси играч..." class="admin-search" />
+
+          <div class="admin-list">
+            <template x-for="m in filteredMatches" :key="m.key">
+              <div class="admin-match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt}">
+                <div class="admin-match-info">
+                  <div class="admin-match-top">
+                    <span class="match-num">#<span x-text="m.num"></span></span>
+                    <template x-if="m.played">
+                      <span class="match-status played">✓</span>
+                    </template>
+                    <template x-if="!m.played && m.scheduledAt">
+                      <span class="match-date">📅 <span x-text="formatDate(m.scheduledAt)"></span></span>
+                    </template>
+                  </div>
+                  <div class="admin-match-vs">
+                    <span :class="{strong: m.played && m.winner===m.p1}" x-text="m.p1"></span>
+                    <template x-if="m.played">
+                      <span class="admin-score" x-text="m.s1 + ':' + m.s2"></span>
+                    </template>
+                    <template x-if="!m.played">
+                      <span class="sep">vs</span>
+                    </template>
+                    <span :class="{strong: m.played && m.winner===m.p2}" x-text="m.p2"></span>
+                  </div>
+                </div>
+                <div class="admin-match-actions">
+                  <template x-if="!m.played">
+                    <button class="btn-mini btn-primary" @click="openScore(m)">🎾 Резултат</button>
+                  </template>
+                  <template x-if="!m.played">
+                    <button class="btn-mini" @click="openSchedule(m)" x-text="m.scheduledAt ? '📅 Прегласувай' : '📅 Планирай'"></button>
+                  </template>
+                  <template x-if="!m.played && m.scheduledAt">
+                    <button class="btn-mini btn-danger" @click="if(confirm('Откажи планираната дата?')) clearSchedule(m)">✕</button>
+                  </template>
+                  <template x-if="m.played">
+                    <button class="btn-mini" @click="openScore(m)">✎ Редактирай</button>
+                  </template>
+                  <template x-if="m.played">
+                    <button class="btn-mini btn-danger" @click="if(confirm('Изтрий резултата?')) clearResult(m)">✕</button>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+  </main>
+
+  <!-- ===== BOTTOM NAV ===== -->
+  <nav class="bottom-nav">
+    <button :class="{active: view==='standings'}" @click="view='standings'">
+      <span class="nav-icon">🏆</span>
+      <span class="nav-label">Класиране</span>
+    </button>
+    <button :class="{active: view==='upcoming'}" @click="view='upcoming'">
+      <span class="nav-icon">📅</span>
+      <span class="nav-label">Предстоящи</span>
+      <span class="nav-badge" x-show="scheduledMatches.length > 0" x-text="scheduledMatches.length"></span>
+    </button>
+    <button :class="{active: view==='matches'}" @click="view='matches'; matchPlayerFilter=''; matchSearch=''; matchFilter='all'">
+      <span class="nav-icon">🎾</span>
+      <span class="nav-label">Мачове</span>
+    </button>
+    <button :class="{active: view==='grid'}" @click="view='grid'">
+      <span class="nav-icon">⚔️</span>
+      <span class="nav-label">Двубои</span>
+    </button>
+    <button :class="{active: view==='admin'}" @click="view='admin'">
+      <span class="nav-icon" x-text="isAdmin ? '🔓' : '🔒'"></span>
+      <span class="nav-label">Админ</span>
+    </button>
+  </nav>
+
+  <!-- ===== SCORE MODAL ===== -->
+  <div class="modal-backdrop" x-show="scoreMatch" @click.self="scoreMatch=null" x-transition.opacity style="display:none">
+    <div class="modal" x-show="scoreMatch" x-transition>
+      <template x-if="scoreMatch">
+        <div>
+          <div class="modal-head">
+            <button class="btn-close" @click="scoreMatch=null">✕</button>
+            <h3>Мач #<span x-text="scoreMatch.num"></span></h3>
+            <div style="width:36px"></div>
+          </div>
+          <div class="modal-vs">
+            <div class="modal-vs-player">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(scoreMatch.p1)}`" x-text="initials(scoreMatch.p1)"></span>
+              <span x-text="scoreMatch.p1"></span>
+            </div>
+            <div class="modal-vs-sep">vs</div>
+            <div class="modal-vs-player">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(scoreMatch.p2)}`" x-text="initials(scoreMatch.p2)"></span>
+              <span x-text="scoreMatch.p2"></span>
+            </div>
+          </div>
+          <div class="score-options">
+            <button class="score-btn" @click="setResult(scoreMatch, 2, 0)">
+              <span class="score-num">2 : 0</span>
+              <span class="score-who"><strong x-text="scoreMatch.p1"></strong> печели</span>
+            </button>
+            <button class="score-btn" @click="setResult(scoreMatch, 2, 1)">
+              <span class="score-num">2 : 1</span>
+              <span class="score-who"><strong x-text="scoreMatch.p1"></strong> печели</span>
+            </button>
+            <button class="score-btn" @click="setResult(scoreMatch, 1, 2)">
+              <span class="score-num">1 : 2</span>
+              <span class="score-who"><strong x-text="scoreMatch.p2"></strong> печели</span>
+            </button>
+            <button class="score-btn" @click="setResult(scoreMatch, 0, 2)">
+              <span class="score-num">0 : 2</span>
+              <span class="score-who"><strong x-text="scoreMatch.p2"></strong> печели</span>
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== SCHEDULE MODAL (single match quick reschedule) ===== -->
+  <div class="modal-backdrop" x-show="scheduleMatch" @click.self="scheduleMatch=null" x-transition.opacity style="display:none">
+    <div class="modal" x-show="scheduleMatch" x-transition>
+      <template x-if="scheduleMatch">
+        <div>
+          <div class="modal-head">
+            <button class="btn-close" @click="scheduleMatch=null">✕</button>
+            <h3>Планирай мач #<span x-text="scheduleMatch.num"></span></h3>
+            <div style="width:36px"></div>
+          </div>
+          <div class="modal-vs">
+            <div class="modal-vs-player">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(scheduleMatch.p1)}`" x-text="initials(scheduleMatch.p1)"></span>
+              <span x-text="scheduleMatch.p1"></span>
+            </div>
+            <div class="modal-vs-sep">vs</div>
+            <div class="modal-vs-player">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(scheduleMatch.p2)}`" x-text="initials(scheduleMatch.p2)"></span>
+              <span x-text="scheduleMatch.p2"></span>
+            </div>
+          </div>
+          <label class="form-label">Дата и час</label>
+          <input type="datetime-local" x-model="scheduleInput" class="form-input" />
+          <div class="modal-actions">
+            <button class="btn-ghost" @click="scheduleMatch=null">Откажи</button>
+            <button class="btn-primary" @click="setSchedule(scheduleMatch, scheduleInput)" :disabled="!scheduleInput">Запази</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== WIZARD MODAL ===== -->
+  <div class="modal-backdrop wizard-backdrop" x-show="wizard.open" @click.self="closeWizard()" x-transition.opacity style="display:none">
+    <div class="modal wizard-modal" x-show="wizard.open" x-transition>
+      <div class="wizard-head">
+        <button class="btn-close" @click="wizard.step > 1 ? wizardBack() : closeWizard()" x-text="wizard.step > 1 ? '←' : '✕'"></button>
+        <div class="wizard-title">
+          <h3 x-text="wizardTitle"></h3>
+          <div class="wizard-steps">
+            <template x-for="i in (wizard.mode === 'schedule' ? 4 : 3)" :key="i">
+              <span class="wizard-dot" :class="{active: i <= wizard.step, current: i === wizard.step}"></span>
+            </template>
+          </div>
+        </div>
+        <div style="width:36px"></div>
+      </div>
+
+      <template x-if="wizard.step >= 2">
+        <div class="wizard-summary">
+          <div class="wizard-summary-pill">
+            <span class="avatar sm" :style="`--avatar-hue:${playerHue(wizard.playerA)}`" x-text="initials(wizard.playerA)"></span>
+            <span x-text="wizard.playerA"></span>
+          </div>
+          <template x-if="wizard.playerB">
+            <span class="wizard-summary-vs">vs</span>
+          </template>
+          <template x-if="wizard.playerB">
+            <div class="wizard-summary-pill">
+              <span class="avatar sm" :style="`--avatar-hue:${playerHue(wizard.playerB)}`" x-text="initials(wizard.playerB)"></span>
+              <span x-text="wizard.playerB"></span>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- STEP 1: Player A -->
+      <div class="wizard-step" x-show="wizard.step === 1">
+        <div class="player-grid">
+          <template x-for="p in players" :key="p">
+            <button class="player-btn" @click="wizardSelectA(p)">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(p)}`" x-text="initials(p)"></span>
+              <span class="player-btn-name" x-text="p"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- STEP 2: Player B -->
+      <div class="wizard-step" x-show="wizard.step === 2">
+        <template x-if="wizardOpponents.length === 0">
+          <div class="wizard-empty">
+            <div class="empty-icon">✓</div>
+            <h3>Няма свободни опоненти</h3>
+            <p>Този играч вече е играл с всички!</p>
+          </div>
+        </template>
+        <div class="player-grid">
+          <template x-for="op in wizardOpponents" :key="op.name">
+            <button class="player-btn" :class="{scheduled: op.scheduledAt}" @click="wizardSelectB(op.name)">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(op.name)}`" x-text="initials(op.name)"></span>
+              <span class="player-btn-name" x-text="op.name"></span>
+              <span class="player-btn-pill" x-show="op.scheduledAt" x-text="'📅 ' + formatDate(op.scheduledAt)"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <!-- STEP 3 schedule: Calendar -->
+      <div class="wizard-step" x-show="wizard.step === 3 && wizard.mode === 'schedule'">
+        <div class="calendar">
+          <div class="calendar-head">
+            <button class="cal-nav" @click="calPrevMonth()">‹</button>
+            <div class="cal-month" x-text="calendarMonthLabel"></div>
+            <button class="cal-nav" @click="calNextMonth()">›</button>
+          </div>
+          <div class="calendar-weekdays">
+            <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Нд</span>
+          </div>
+          <div class="calendar-grid">
+            <template x-for="d in calendarDays" :key="d.date">
+              <button
+                class="cal-day"
+                :class="{
+                  'cal-other': d.isOtherMonth,
+                  'cal-past': d.isPast,
+                  'cal-today': d.isToday,
+                  'cal-has': d.hasMatches,
+                  'cal-selected': wizard.date === d.date
+                }"
+                :disabled="d.isPast"
+                @click="wizardSelectDate(d.date)"
+                x-text="d.day"
+              ></button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 4 schedule: Time -->
+      <div class="wizard-step" x-show="wizard.step === 4 && wizard.mode === 'schedule'">
+        <div class="time-presets">
+          <template x-for="t in timePresets" :key="t">
+            <button class="time-btn" :class="{active: wizard.time === t}" @click="wizard.time = t" x-text="t"></button>
+          </template>
+        </div>
+        <div class="time-custom">
+          <label class="form-label">Друг час</label>
+          <input type="time" x-model="wizard.time" class="form-input" />
+        </div>
+        <div class="wizard-confirm-card" x-show="wizard.date && wizard.time">
+          <div class="wizard-confirm-text">
+            <strong x-text="wizard.playerA"></strong> срещу <strong x-text="wizard.playerB"></strong>
+            <br />
+            <span x-text="wizardConfirmDateText"></span>
+          </div>
+        </div>
+        <button class="btn-primary full big" @click="wizardConfirmSchedule()" :disabled="!wizard.time">
+          ✓ Потвърди планирането
+        </button>
+      </div>
+
+      <!-- STEP 3 result: Score -->
+      <div class="wizard-step" x-show="wizard.step === 3 && wizard.mode === 'result'">
+        <div class="score-options">
+          <button class="score-btn" @click="wizardConfirmResult(2, 0)">
+            <span class="score-num">2 : 0</span>
+            <span class="score-who"><strong x-text="wizard.playerA"></strong> печели</span>
+          </button>
+          <button class="score-btn" @click="wizardConfirmResult(2, 1)">
+            <span class="score-num">2 : 1</span>
+            <span class="score-who"><strong x-text="wizard.playerA"></strong> печели</span>
+          </button>
+          <button class="score-btn" @click="wizardConfirmResult(1, 2)">
+            <span class="score-num">1 : 2</span>
+            <span class="score-who"><strong x-text="wizard.playerB"></strong> печели</span>
+          </button>
+          <button class="score-btn" @click="wizardConfirmResult(0, 2)">
+            <span class="score-num">0 : 2</span>
+            <span class="score-who"><strong x-text="wizard.playerB"></strong> печели</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PLAYER PICKER MODAL ===== -->
+  <div class="modal-backdrop" x-show="playerPicker.open" @click.self="closePlayerPicker()" x-transition.opacity style="display:none">
+    <div class="modal" x-show="playerPicker.open" x-transition>
+      <div class="modal-head">
+        <button class="btn-close" @click="closePlayerPicker()">✕</button>
+        <h3 x-text="playerPicker.title"></h3>
+        <div style="width:36px"></div>
+      </div>
+      <button class="player-all-btn" x-show="playerPicker.showAll" @click="selectPickerPlayer('')">
+        <span class="player-all-icon">👥</span>
+        <span>Всички играчи</span>
+      </button>
+      <div class="player-grid">
+        <template x-for="p in players" :key="p">
+          <button class="player-btn" @click="selectPickerPlayer(p)">
+            <span class="avatar lg" :style="`--avatar-hue:${playerHue(p)}`" x-text="initials(p)"></span>
+            <span class="player-btn-name" x-text="p"></span>
+            <span class="player-btn-stat" x-show="playedCountFor(p) > 0">
+              <span x-text="playedCountFor(p)"></span><span class="stat-sep">/</span><span x-text="matchCountFor(p)"></span>
+            </span>
+          </button>
+        </template>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
