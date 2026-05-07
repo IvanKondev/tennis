@@ -1,6 +1,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const zlib = require('zlib');
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const DATA_FILE = path.join(DATA_DIR, 'tennis.json');
@@ -31,6 +33,40 @@ const MIME = {
   '.woff2':'font/woff2'
 };
 
+const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.svg', '.json']);
+
+// ===== File cache (loaded into memory at startup) =====
+const fileCache = new Map();
+
+function loadIntoCache(filePath) {
+  try {
+    const content = fs.readFileSync(filePath);
+    const etag = '"' + crypto.createHash('md5').update(content).digest('hex').slice(0, 16) + '"';
+    const ext = path.extname(filePath).toLowerCase();
+    const entry = { content, etag, ext };
+    if (COMPRESSIBLE.has(ext) && content.length > 1024) {
+      entry.gzipped = zlib.gzipSync(content, { level: 9 });
+    }
+    fileCache.set(filePath, entry);
+    return entry;
+  } catch (e) { return null; }
+}
+
+function preloadPublicDir() {
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      const stat = fs.statSync(full);
+      if (stat.isDirectory()) walk(full);
+      else loadIntoCache(full);
+    }
+  };
+  if (fs.existsSync(PUBLIC_DIR)) walk(PUBLIC_DIR);
+  console.log(`[cache] Preloaded ${fileCache.size} static files`);
+}
+
+preloadPublicDir();
+
 function readData() {
   try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); }
   catch (e) { return { results: {}, schedule: {} }; }
@@ -39,7 +75,7 @@ function readData() {
 function writeData(data) {
   const tmp = DATA_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, DATA_FILE); // atomic on same fs
+  fs.renameSync(tmp, DATA_FILE);
 }
 
 function readBody(req) {
@@ -62,6 +98,49 @@ function json(res, status, payload) {
 function checkAdmin(req) {
   if (!ADMIN_PASSWORD) return false;
   return req.headers['x-admin-password'] === ADMIN_PASSWORD;
+}
+
+function acceptsGzip(req) {
+  const ae = req.headers['accept-encoding'] || '';
+  return /\bgzip\b/.test(ae);
+}
+
+function serveStatic(req, res, urlPath) {
+  const filePath = path.join(PUBLIC_DIR, urlPath === '/' ? 'index.html' : urlPath);
+  if (!filePath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403); return res.end('forbidden');
+  }
+  const cached = fileCache.get(filePath) || loadIntoCache(filePath);
+  if (!cached) {
+    res.writeHead(404); return res.end('not found');
+  }
+
+  // Conditional GET — instant 304
+  if (req.headers['if-none-match'] === cached.etag) {
+    res.writeHead(304, { 'ETag': cached.etag });
+    return res.end();
+  }
+
+  const isHtml = cached.ext === '.html';
+  const headers = {
+    'Content-Type': MIME[cached.ext] || 'application/octet-stream',
+    'ETag': cached.etag,
+    'Cache-Control': isHtml
+      ? 'public, max-age=0, must-revalidate'
+      : 'public, max-age=604800, immutable'
+  };
+
+  // Gzip if available + accepted
+  if (cached.gzipped && acceptsGzip(req)) {
+    headers['Content-Encoding'] = 'gzip';
+    headers['Vary'] = 'Accept-Encoding';
+    headers['Content-Length'] = cached.gzipped.length;
+    res.writeHead(200, headers);
+    return res.end(cached.gzipped);
+  }
+  headers['Content-Length'] = cached.content.length;
+  res.writeHead(200, headers);
+  res.end(cached.content);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -96,21 +175,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ===== STATIC =====
-    let filePath = path.join(PUBLIC_DIR, url === '/' ? 'index.html' : url);
-    if (!filePath.startsWith(PUBLIC_DIR)) {
-      res.writeHead(403); return res.end('forbidden');
-    }
-    fs.readFile(filePath, (err, content) => {
-      if (err) {
-        res.writeHead(404); return res.end('not found');
-      }
-      const ext = path.extname(filePath).toLowerCase();
-      res.writeHead(200, {
-        'Content-Type': MIME[ext] || 'application/octet-stream',
-        'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600'
-      });
-      res.end(content);
-    });
+    serveStatic(req, res, url);
   } catch (e) {
     console.error('[err]', e);
     json(res, 500, { error: e.message });

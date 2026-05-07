@@ -7,7 +7,7 @@ COPY server.js ./
 
 # Static frontend lives in public/
 RUN mkdir -p public
-COPY index.html styles.css app.js data.js ./public/
+COPY index.html styles.css app.js data.js alpine.min.js ./public/
 
 # Persistent volume for results / schedule
 RUN mkdir -p /data
