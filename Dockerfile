@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # No npm dependencies — server uses only Node built-ins
-COPY server.js ./
+COPY server.js data.js ./
 
 # Static frontend lives in public/
 RUN mkdir -p public

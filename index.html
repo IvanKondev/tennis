@@ -54,6 +54,57 @@
 
     <!-- ===== STANDINGS ===== -->
     <section class="panel" x-show="view === 'standings'">
+      <!-- Live banner -->
+      <template x-if="liveMatchesList.length > 0">
+        <div class="live-banner">
+          <div class="live-banner-head">
+            <span class="live-dot"></span>
+            <span>На живо в момента</span>
+          </div>
+          <template x-for="m in liveMatchesList" :key="m.key">
+            <div class="live-banner-row" @click="openLive(m)">
+              <span class="live-banner-vs">
+                <span x-text="m.p1"></span>
+                <span class="live-banner-sep">vs</span>
+                <span x-text="m.p2"></span>
+              </span>
+              <span class="live-banner-score" x-text="formatLiveScore(m)"></span>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Today's matches quick-write -->
+      <template x-if="todaysMatches.length > 0">
+        <div class="today-banner">
+          <div class="today-banner-head">📅 Мачове днес — въведи резултат</div>
+          <template x-for="m in todaysMatches" :key="m.key">
+            <div class="today-banner-row" :class="{'is-live': isMatchLive(m)}">
+              <div class="today-banner-info">
+                <span class="today-banner-time" x-text="m.scheduledAt.slice(11,16)"></span>
+                <span class="today-banner-vs">
+                  <span x-text="m.p1"></span>
+                  <span class="today-banner-sep">vs</span>
+                  <span x-text="m.p2"></span>
+                </span>
+              </div>
+              <template x-if="isMatchLive(m)">
+                <button class="btn-live small" @click="openLive(m)">
+                  <span class="live-dot"></span>
+                  <span x-text="formatLiveScore(m)"></span>
+                </button>
+              </template>
+              <template x-if="!isMatchLive(m)">
+                <div class="today-banner-actions">
+                  <button class="btn-live small" @click="openLive(m)">🔴 Live</button>
+                  <button class="btn-final small" @click="openScore(m)">🏁</button>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+
       <!-- Podium -->
       <template x-if="standings[0] && standings[0].played > 0">
         <div class="podium">
@@ -135,7 +186,7 @@
       </template>
       <div class="upcoming-list">
         <template x-for="m in scheduledMatches" :key="m.key">
-          <div class="upcoming-card">
+          <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
             <div class="upcoming-date-row">
               <div class="upcoming-date">
                 <span x-text="formatDateLong(m.scheduledAt)"></span>
@@ -153,6 +204,20 @@
                 <span class="upcoming-name" x-text="m.p2"></span>
               </div>
             </div>
+            <template x-if="isMatchLive(m)">
+              <div class="live-strip" @click="openLive(m)">
+                <span class="live-dot"></span>
+                <span class="live-label">НА ЖИВО</span>
+                <span class="live-score" x-text="formatLiveScore(m)"></span>
+                <span class="live-arrow">→</span>
+              </div>
+            </template>
+            <template x-if="canWriteToday(m) && !isMatchLive(m)">
+              <div class="today-actions">
+                <button class="btn-live" @click="openLive(m)">🔴 На живо</button>
+                <button class="btn-final" @click="openScore(m)">🏁 Краен резултат</button>
+              </div>
+            </template>
           </div>
         </template>
       </div>
@@ -215,16 +280,19 @@
           </div>
           <div class="match-group-list">
             <template x-for="m in g.matches" :key="m.key">
-              <div class="match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt}">
+              <div class="match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
                 <div class="match-top">
                   <span class="match-num">#<span x-text="m.num"></span></span>
-                  <template x-if="!m.played && m.scheduledAt">
+                  <template x-if="isMatchLive(m)">
+                    <span class="match-status live"><span class="live-dot"></span> LIVE <span x-text="formatLiveScore(m)"></span></span>
+                  </template>
+                  <template x-if="!isMatchLive(m) && !m.played && m.scheduledAt">
                     <span class="match-date">📅 <span x-text="formatDate(m.scheduledAt)"></span></span>
                   </template>
                   <template x-if="m.played">
                     <span class="match-status played">✓ Изигран</span>
                   </template>
-                  <template x-if="!m.played && !m.scheduledAt">
+                  <template x-if="!isMatchLive(m) && !m.played && !m.scheduledAt">
                     <span class="match-status pending">Чака</span>
                   </template>
                 </div>
@@ -250,6 +318,17 @@
                     <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
                   </div>
                 </div>
+                <template x-if="canWriteToday(m)">
+                  <div class="match-actions">
+                    <template x-if="isMatchLive(m)">
+                      <button class="btn-mini btn-live-mini" @click.stop="openLive(m)">🔴 Продължи на живо</button>
+                    </template>
+                    <template x-if="!isMatchLive(m)">
+                      <button class="btn-mini btn-live-mini" @click.stop="openLive(m)">🔴 На живо</button>
+                    </template>
+                    <button class="btn-mini" @click.stop="openScore(m)">🏁 Краен</button>
+                  </div>
+                </template>
               </div>
             </template>
           </div>
@@ -423,14 +502,17 @@
 
           <div class="admin-list">
             <template x-for="m in filteredMatches" :key="m.key">
-              <div class="admin-match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt}">
+              <div class="admin-match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
                 <div class="admin-match-info">
                   <div class="admin-match-top">
                     <span class="match-num">#<span x-text="m.num"></span></span>
+                    <template x-if="isMatchLive(m)">
+                      <span class="match-status live"><span class="live-dot"></span> LIVE <span x-text="formatLiveScore(m)"></span></span>
+                    </template>
                     <template x-if="m.played">
                       <span class="match-status played">✓</span>
                     </template>
-                    <template x-if="!m.played && m.scheduledAt">
+                    <template x-if="!isMatchLive(m) && !m.played && m.scheduledAt">
                       <span class="match-date">📅 <span x-text="formatDate(m.scheduledAt)"></span></span>
                     </template>
                   </div>
@@ -447,6 +529,9 @@
                 </div>
                 <div class="admin-match-actions">
                   <template x-if="!m.played">
+                    <button class="btn-mini btn-live-mini" @click="openLive(m)" x-text="isMatchLive(m) ? '🔴 Продължи' : '🔴 На живо'"></button>
+                  </template>
+                  <template x-if="!m.played">
                     <button class="btn-mini btn-primary" @click="openScore(m)">🎾 Резултат</button>
                   </template>
                   <template x-if="!m.played">
@@ -454,6 +539,9 @@
                   </template>
                   <template x-if="!m.played && m.scheduledAt">
                     <button class="btn-mini btn-danger" @click="if(confirm('Откажи планираната дата?')) clearSchedule(m)">✕</button>
+                  </template>
+                  <template x-if="isMatchLive(m)">
+                    <button class="btn-mini btn-danger" @click="clearLive(m)" title="Изтрий live">✕ Live</button>
                   </template>
                   <template x-if="m.played">
                     <button class="btn-mini" @click="openScore(m)">✎ Редактирай</button>
@@ -740,6 +828,180 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== LIVE SCORING MODAL ===== -->
+  <div class="modal-backdrop live-backdrop" x-show="liveMatch" @click.self="closeLive()" x-transition.opacity style="display:none">
+    <div class="modal live-modal" x-show="liveMatch" x-transition>
+      <template x-if="liveMatch">
+        <div>
+          <div class="modal-head">
+            <button class="btn-close" @click="closeLive()">✕</button>
+            <h3>
+              <span class="live-dot"></span>
+              На живо · #<span x-text="liveMatch.num"></span>
+            </h3>
+            <div style="width:36px"></div>
+          </div>
+
+          <!-- Sets summary -->
+          <div class="live-sets-summary" x-show="liveDraft.sets.length > 0">
+            <div class="live-sets-label">Изиграни сетове</div>
+            <div class="live-sets-list">
+              <template x-for="(s, i) in liveDraft.sets" :key="i">
+                <div class="live-set-pill">
+                  <span class="live-set-idx">Сет <span x-text="i+1"></span></span>
+                  <span class="live-set-score" :class="{w1: s[0]>s[1], w2: s[1]>s[0]}">
+                    <span x-text="s[0]"></span>:<span x-text="s[1]"></span>
+                  </span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Players header (always visible) -->
+          <div class="live-players">
+            <div class="live-player-cell">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(liveMatch.p1)}`" x-text="initials(liveMatch.p1)"></span>
+              <span class="live-player-name" x-text="liveMatch.p1"></span>
+              <span class="live-sets-won" x-text="liveSetsWon(liveMatch)[0] + ' сета'"></span>
+            </div>
+            <div class="live-vs-sep">vs</div>
+            <div class="live-player-cell">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(liveMatch.p2)}`" x-text="initials(liveMatch.p2)"></span>
+              <span class="live-player-name" x-text="liveMatch.p2"></span>
+              <span class="live-sets-won" x-text="liveSetsWon(liveMatch)[1] + ' сета'"></span>
+            </div>
+          </div>
+
+          <!-- Current set / Tiebreak panel -->
+          <div class="live-current">
+            <div class="live-current-label">
+              <template x-if="!liveDraft.tb">
+                <span>Текущ сет — геймове</span>
+              </template>
+              <template x-if="liveDraft.tb">
+                <span class="live-tb-label">⚡ TIEBREAK · първи до 7 (с 2 разлика)</span>
+              </template>
+            </div>
+
+            <!-- Games scoreboard -->
+            <template x-if="!liveDraft.tb">
+              <div class="live-scoreboard">
+                <div class="live-score-cell">
+                  <button class="score-step minus" @click="liveSubPoint(0)" :disabled="liveDraft.cur[0] === 0">–</button>
+                  <div class="live-score-num" x-text="liveDraft.cur[0]"></div>
+                  <button class="score-step plus" @click="liveAddPoint(0)">+</button>
+                </div>
+                <div class="live-score-divider">:</div>
+                <div class="live-score-cell">
+                  <button class="score-step minus" @click="liveSubPoint(1)" :disabled="liveDraft.cur[1] === 0">–</button>
+                  <div class="live-score-num" x-text="liveDraft.cur[1]"></div>
+                  <button class="score-step plus" @click="liveAddPoint(1)">+</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Tiebreak scoreboard -->
+            <template x-if="liveDraft.tb">
+              <div class="live-scoreboard tb">
+                <div class="live-score-cell">
+                  <button class="score-step minus" @click="liveSubPoint(0)" :disabled="liveDraft.tb[0] === 0">–</button>
+                  <div class="live-score-num" x-text="liveDraft.tb[0]"></div>
+                  <button class="score-step plus" @click="liveAddPoint(0)">+</button>
+                </div>
+                <div class="live-score-divider">:</div>
+                <div class="live-score-cell">
+                  <button class="score-step minus" @click="liveSubPoint(1)" :disabled="liveDraft.tb[1] === 0">–</button>
+                  <div class="live-score-num" x-text="liveDraft.tb[1]"></div>
+                  <button class="score-step plus" @click="liveAddPoint(1)">+</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- End-of-set button (games mode only) -->
+            <template x-if="!liveDraft.tb">
+              <button
+                class="btn-primary full live-end-set"
+                @click="liveEndCurrentSet()"
+                :disabled="!liveCanEndSet()">
+                <span x-show="liveCanEndSet()">
+                  ✓ Завърши сета —
+                  <strong x-text="(liveDraft.cur[0] > liveDraft.cur[1] ? liveMatch.p1 : liveMatch.p2)"></strong>
+                  печели
+                </span>
+                <span x-show="!liveCanEndSet() && liveDraft.cur[0] === liveDraft.cur[1] && liveDraft.cur[0] === 0">
+                  Натискай + след всеки гейм
+                </span>
+                <span x-show="!liveCanEndSet() && liveDraft.cur[0] === liveDraft.cur[1] && liveDraft.cur[0] > 0">
+                  Равенство — играйте още
+                </span>
+              </button>
+            </template>
+
+            <!-- Cancel tiebreak button -->
+            <template x-if="liveDraft.tb">
+              <button class="btn-ghost full" @click="liveExitTiebreak()">
+                ↩ Откажи tiebreak (върни към геймовете)
+              </button>
+            </template>
+          </div>
+
+          <!-- Status / errors -->
+          <div class="live-status">
+            <span x-show="livePending" class="status-saving">⟳ Запис...</span>
+            <span x-show="!livePending && !liveError" class="status-saved">✓ Синхронизирано</span>
+            <span x-show="liveError" class="status-error" x-text="liveError"></span>
+          </div>
+
+          <p class="live-hint">
+            Когато един от играчите спечели <strong>2 сета</strong>, мачът се финализира автоматично.
+          </p>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== TODAY PICKER (Live or Final?) ===== -->
+  <div class="modal-backdrop" x-show="todayPicker" @click.self="closeTodayPicker()" x-transition.opacity style="display:none">
+    <div class="modal" x-show="todayPicker" x-transition>
+      <template x-if="todayPicker">
+        <div>
+          <div class="modal-head">
+            <button class="btn-close" @click="closeTodayPicker()">✕</button>
+            <h3>Как да въведем резултата?</h3>
+            <div style="width:36px"></div>
+          </div>
+          <div class="modal-vs">
+            <div class="modal-vs-player">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(todayPicker.p1)}`" x-text="initials(todayPicker.p1)"></span>
+              <span x-text="todayPicker.p1"></span>
+            </div>
+            <div class="modal-vs-sep">vs</div>
+            <div class="modal-vs-player">
+              <span class="avatar lg" :style="`--avatar-hue:${playerHue(todayPicker.p2)}`" x-text="initials(todayPicker.p2)"></span>
+              <span x-text="todayPicker.p2"></span>
+            </div>
+          </div>
+          <div class="today-pick-options">
+            <button class="today-pick-btn live" @click="todayPickLive()">
+              <span class="today-pick-icon">🔴</span>
+              <span class="today-pick-text">
+                <strong>На живо — по геймове</strong>
+                <small>Тапвай след всеки гейм; авто-финал при 2 сета</small>
+              </span>
+            </button>
+            <button class="today-pick-btn final" @click="todayPickFinal()">
+              <span class="today-pick-icon">🏁</span>
+              <span class="today-pick-text">
+                <strong>Краен резултат — сетове</strong>
+                <small>Директно избери 2:0, 2:1, 1:2 или 0:2</small>
+              </span>
+            </button>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 

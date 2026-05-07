@@ -198,3 +198,7 @@ const MATCHES_SEED = [
   ["Жоро Б","Влади",[0,2]],
 ];
 
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { PLAYERS, MATCHES_SEED };
+}
+

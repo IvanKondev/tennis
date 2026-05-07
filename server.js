@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const { MATCHES_SEED } = require('./data.js');
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const DATA_FILE = path.join(DATA_DIR, 'tennis.json');
@@ -14,9 +15,12 @@ if (!ADMIN_PASSWORD) {
   console.warn('[WARN] ADMIN_PASSWORD not set — admin writes are disabled.');
 }
 
+// Set of valid canonical match keys (one direction only — same as MATCHES_SEED)
+const VALID_KEYS = new Set(MATCHES_SEED.map(([a, b]) => a + '|' + b));
+
 fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({ results: {}, schedule: {} }, null, 2));
+  fs.writeFileSync(DATA_FILE, JSON.stringify({ results: {}, schedule: {}, live: {} }, null, 2));
   console.log('[init] Created empty data file at', DATA_FILE);
 }
 
@@ -68,8 +72,55 @@ function preloadPublicDir() {
 preloadPublicDir();
 
 function readData() {
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); }
-  catch (e) { return { results: {}, schedule: {} }; }
+  let d;
+  try { d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); }
+  catch (e) { d = {}; }
+  if (!d.results) d.results = {};
+  if (!d.schedule) d.schedule = {};
+  if (!d.live) d.live = {};
+  return d;
+}
+
+function todayLocalISO() {
+  const d = new Date();
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
+function clampInt(n, min, max) {
+  if (typeof n !== 'number' || !isFinite(n)) return null;
+  const v = Math.floor(n);
+  if (v < min || v > max) return null;
+  return v;
+}
+
+function validateLiveBody(body) {
+  if (!body || typeof body !== 'object') return null;
+  const sets = Array.isArray(body.sets) ? body.sets : [];
+  const cur = Array.isArray(body.cur) ? body.cur : null;
+  const tb  = body.tb && Array.isArray(body.tb) ? body.tb : null;
+  if (!cur || cur.length !== 2) return null;
+  if (sets.length > 5) return null;
+  const cleanSets = [];
+  for (const s of sets) {
+    if (!Array.isArray(s) || s.length !== 2) return null;
+    const a = clampInt(s[0], 0, 30);
+    const b = clampInt(s[1], 0, 30);
+    if (a === null || b === null) return null;
+    cleanSets.push([a, b]);
+  }
+  const ca = clampInt(cur[0], 0, 30);
+  const cb = clampInt(cur[1], 0, 30);
+  if (ca === null || cb === null) return null;
+  let cleanTb = null;
+  if (tb && tb.length === 2) {
+    const ta = clampInt(tb[0], 0, 50);
+    const tb2 = clampInt(tb[1], 0, 50);
+    if (ta === null || tb2 === null) return null;
+    cleanTb = [ta, tb2];
+  }
+  return { sets: cleanSets, cur: [ca, cb], tb: cleanTb };
 }
 
 function dataETag() {
@@ -176,8 +227,77 @@ const server = http.createServer(async (req, res) => {
       if (typeof incoming !== 'object' || !incoming.results || !incoming.schedule) {
         return json(res, 400, { error: 'invalid payload' });
       }
-      writeData({ results: incoming.results, schedule: incoming.schedule });
+      writeData({
+        results: incoming.results,
+        schedule: incoming.schedule,
+        live: incoming.live || {}
+      });
       return json(res, 200, { ok: true });
+    }
+
+    // ===== LIVE SCORING =====
+    // POST /api/match/<key>/live  → update live state (open to non-admin on match day)
+    // DELETE /api/match/<key>/live → clear live (admin only)
+    const liveMatch = url.match(/^\/api\/match\/(.+)\/live$/);
+    if (liveMatch) {
+      const key = decodeURIComponent(liveMatch[1]);
+      if (!VALID_KEYS.has(key)) return json(res, 404, { error: 'no such match' });
+
+      const data = readData();
+
+      if (req.method === 'DELETE') {
+        if (!checkAdmin(req)) return json(res, 401, { error: 'unauthorized' });
+        if (data.live[key]) {
+          delete data.live[key];
+          writeData(data);
+        }
+        return json(res, 200, { ok: true });
+      }
+
+      if (req.method !== 'POST') {
+        res.writeHead(405); return res.end();
+      }
+
+      const isAdmin = checkAdmin(req);
+      if (data.results[key]) return json(res, 409, { error: 'match already finished' });
+
+      if (!isAdmin) {
+        const sched = data.schedule[key];
+        if (!sched) return json(res, 403, { error: 'match not scheduled' });
+        if (sched.slice(0, 10) !== todayLocalISO()) {
+          return json(res, 403, { error: 'not match day' });
+        }
+      }
+
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch (e) { return json(res, 400, { error: 'invalid json' }); }
+      const v = validateLiveBody(parsed);
+      if (!v) return json(res, 400, { error: 'invalid live state' });
+
+      // Auto-finalize if either player has won 2 sets
+      let setsA = 0, setsB = 0;
+      for (const [a, b] of v.sets) {
+        if (a > b) setsA++;
+        else if (b > a) setsB++;
+      }
+      let finalized = false;
+      if (setsA >= 2 || setsB >= 2) {
+        data.results[key] = [setsA, setsB];
+        delete data.live[key];
+        if (data.schedule[key]) delete data.schedule[key];
+        finalized = true;
+      } else {
+        data.live[key] = { ...v, updatedAt: new Date().toISOString() };
+      }
+      writeData(data);
+      return json(res, 200, {
+        ok: true,
+        finalized,
+        live: data.live[key] || null,
+        result: finalized ? data.results[key] : null
+      });
     }
 
     if (url === '/api/auth' && req.method === 'POST') {

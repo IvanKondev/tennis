@@ -4,6 +4,7 @@ document.addEventListener('alpine:init', () => {
     view: 'standings',
     results: {},
     schedule: {},
+    live: {},
     passwordHash: null,
     isAdmin: false,
 
@@ -17,6 +18,13 @@ document.addEventListener('alpine:init', () => {
     scoreMatch: null,
     scheduleMatch: null,
     scheduleInput: '',
+
+    // Live scoring modal
+    liveMatch: null,
+    liveDraft: { sets: [], cur: [0, 0], tb: null },
+    livePending: false,
+    liveError: '',
+    todayPicker: null,    // when set, shows "live or final?" chooser modal
 
     wizard: {
       open: false,
@@ -177,6 +185,7 @@ document.addEventListener('alpine:init', () => {
             const data = await r.json();
             this.results = data.results || {};
             this.schedule = data.schedule || {};
+            this.live = data.live || {};
             return;
           }
         } catch (e) {}
@@ -189,6 +198,7 @@ document.addEventListener('alpine:init', () => {
           const data = JSON.parse(raw);
           this.results = data.results || {};
           this.schedule = data.schedule || {};
+          this.live = data.live || {};
           this.passwordHash = data.passwordHash || null;
           return;
         }
@@ -200,6 +210,7 @@ document.addEventListener('alpine:init', () => {
       });
       this.results = r;
       this.schedule = {};
+      this.live = {};
       this.passwordHash = null;
       this.persistLocal();
     },
@@ -208,6 +219,7 @@ document.addEventListener('alpine:init', () => {
       localStorage.setItem('tennis-v1', JSON.stringify({
         results: this.results,
         schedule: this.schedule,
+        live: this.live,
         passwordHash: this.passwordHash
       }));
     },
@@ -250,11 +262,11 @@ document.addEventListener('alpine:init', () => {
 
       const tick = () => this.pollForUpdates();
 
-      // Poll every 25s
+      // Tick every 5s; poll() decides whether to actually fetch (5s when live, 25s otherwise)
       this._pollInterval = setInterval(() => {
         if (document.hidden) return;
         tick();
-      }, 25000);
+      }, 5000);
 
       // Refresh once on tab focus
       document.addEventListener('visibilitychange', () => {
@@ -263,14 +275,25 @@ document.addEventListener('alpine:init', () => {
     },
 
     isUserBusy() {
-      // Don't disturb if a modal/wizard is active
+      // Don't disturb if a modal/wizard is active.
+      // Note: liveMatch is excluded — we WANT live data refreshes while scoring.
       return !!(this.scoreMatch || this.scheduleMatch ||
                 this.wizard.open || this.playerPicker.open ||
-                this.saveStatus === 'saving');
+                this.todayPicker || this.saveStatus === 'saving');
+    },
+
+    get hasActiveLive() {
+      for (const k in this.live) return true;
+      return false;
     },
 
     async pollForUpdates() {
       if (this.isUserBusy()) return;
+      // Throttle: 5s when live matches active, 25s otherwise
+      const now = Date.now();
+      const interval = this.hasActiveLive ? 5000 : 25000;
+      if (this._lastPoll && (now - this._lastPoll) < interval - 100) return;
+      this._lastPoll = now;
       try {
         const headers = {};
         if (this._dataETag) headers['If-None-Match'] = this._dataETag;
@@ -283,10 +306,12 @@ document.addEventListener('alpine:init', () => {
         // Compute diff to detect actual changes (vs ETag false positive)
         const newR = JSON.stringify(data.results || {});
         const newS = JSON.stringify(data.schedule || {});
+        const newL = JSON.stringify(data.live || {});
         const curR = JSON.stringify(this.results || {});
         const curS = JSON.stringify(this.schedule || {});
+        const curL = JSON.stringify(this.live || {});
 
-        if (newR === curR && newS === curS) {
+        if (newR === curR && newS === curS && newL === curL) {
           this._dataETag = newETag;
           return;
         }
@@ -294,11 +319,16 @@ document.addEventListener('alpine:init', () => {
         this._fromServer = true;
         this.results = data.results || {};
         this.schedule = data.schedule || {};
+        this.live = data.live || {};
         this._dataETag = newETag;
         // Clear flag after watchers fire (microtask)
         Promise.resolve().then(() => { this._fromServer = false; });
 
-        this.showToast('✨ Данните са обновени');
+        if (newL !== curL) {
+          this.showToast('🔴 Live резултат обновен');
+        } else {
+          this.showToast('✨ Данните са обновени');
+        }
       } catch (e) {
         // Silent fail — try again next tick
       }
@@ -846,6 +876,259 @@ document.addEventListener('alpine:init', () => {
       this.matchFilter = 'all';
       this.view = 'matches';
       // scroll handled by view watcher
+    },
+
+    // ======= LIVE SCORING =======
+    todayISO() {
+      const d = new Date();
+      return d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0');
+    },
+
+    isMatchToday(match) {
+      if (!match || !match.scheduledAt) return false;
+      return match.scheduledAt.slice(0, 10) === this.todayISO();
+    },
+
+    // True when ANYONE (admin or not) can write a result/live for this match
+    canWriteToday(match) {
+      if (!match || match.played) return false;
+      if (this.isAdmin) return true;
+      return this.isMatchToday(match);
+    },
+
+    liveOf(match) {
+      return (match && this.live[match.key]) || null;
+    },
+
+    isMatchLive(match) {
+      return !!this.liveOf(match);
+    },
+
+    // Compute "sets so far" for a live match (winner perspective from p1)
+    liveSetsWon(match) {
+      const l = this.liveOf(match);
+      if (!l) return [0, 0];
+      let a = 0, b = 0;
+      for (const [x, y] of (l.sets || [])) {
+        if (x > y) a++;
+        else if (y > x) b++;
+      }
+      return [a, b];
+    },
+
+    formatLiveScore(match) {
+      const l = this.liveOf(match);
+      if (!l) return '';
+      const parts = (l.sets || []).map(([a, b]) => `${a}:${b}`);
+      const [ca, cb] = l.cur || [0, 0];
+      const tb = l.tb;
+      let curStr;
+      if (tb) curStr = `${ca}:${cb} · TB ${tb[0]}:${tb[1]}`;
+      else if (ca || cb) curStr = `${ca}:${cb}`;
+      else curStr = '';
+      if (curStr) parts.push(curStr);
+      return parts.join(', ');
+    },
+
+    // Show a chooser when user wants to enter today's match result
+    openTodayPicker(match) {
+      if (!this.canWriteToday(match)) return;
+      this.todayPicker = match;
+    },
+
+    closeTodayPicker() { this.todayPicker = null; },
+
+    todayPickFinal() {
+      const m = this.todayPicker;
+      this.todayPicker = null;
+      if (m) this.openScore(m);
+    },
+
+    todayPickLive() {
+      const m = this.todayPicker;
+      this.todayPicker = null;
+      if (m) this.openLive(m);
+    },
+
+    openLive(match) {
+      if (!this.canWriteToday(match)) return;
+      const existing = this.liveOf(match);
+      if (existing) {
+        this.liveDraft = {
+          sets: (existing.sets || []).map(s => [s[0], s[1]]),
+          cur:  [existing.cur ? existing.cur[0] : 0, existing.cur ? existing.cur[1] : 0],
+          tb:   existing.tb ? [existing.tb[0], existing.tb[1]] : null
+        };
+      } else {
+        this.liveDraft = { sets: [], cur: [0, 0], tb: null };
+      }
+      this.liveError = '';
+      this.liveMatch = match;
+    },
+
+    closeLive() {
+      this.liveMatch = null;
+      this.liveError = '';
+      this.livePending = false;
+    },
+
+    liveCurSetWonByLeader() {
+      const [a, b] = this.liveDraft.cur;
+      return a !== b;
+    },
+
+    liveCanEndSet() {
+      // Can end the current set if not in tiebreak and game count is unequal
+      return !this.liveDraft.tb && this.liveCurSetWonByLeader();
+    },
+
+    liveAddPoint(playerIdx) {
+      // playerIdx: 0 (p1) or 1 (p2)
+      if (this.liveDraft.tb) {
+        this.liveDraft.tb[playerIdx]++;
+        const [t0, t1] = this.liveDraft.tb;
+        if ((t0 >= 7 || t1 >= 7) && Math.abs(t0 - t1) >= 2) {
+          // tiebreak won → set is recorded as 7:6
+          const winner = t0 > t1 ? 0 : 1;
+          const newSet = winner === 0 ? [7, 6] : [6, 7];
+          this.liveDraft.sets.push(newSet);
+          this.liveDraft.cur = [0, 0];
+          this.liveDraft.tb = null;
+        }
+      } else {
+        this.liveDraft.cur[playerIdx]++;
+        // 6:6 → enter tiebreak
+        if (this.liveDraft.cur[0] === 6 && this.liveDraft.cur[1] === 6) {
+          this.liveDraft.tb = [0, 0];
+        }
+      }
+      // re-bind so Alpine sees the change
+      this.liveDraft = { ...this.liveDraft };
+      this.persistLive();
+    },
+
+    liveSubPoint(playerIdx) {
+      if (this.liveDraft.tb) {
+        if (this.liveDraft.tb[playerIdx] > 0) this.liveDraft.tb[playerIdx]--;
+        // exit tiebreak if both reset to 0
+        if (this.liveDraft.tb[0] === 0 && this.liveDraft.tb[1] === 0) {
+          // keep tiebreak active — user may still want to score in it
+        }
+      } else {
+        if (this.liveDraft.cur[playerIdx] > 0) this.liveDraft.cur[playerIdx]--;
+      }
+      this.liveDraft = { ...this.liveDraft };
+      this.persistLive();
+    },
+
+    liveExitTiebreak() {
+      // Cancel tiebreak (e.g. if entered by mistake)
+      this.liveDraft.tb = null;
+      this.liveDraft = { ...this.liveDraft };
+      this.persistLive();
+    },
+
+    liveEndCurrentSet() {
+      if (!this.liveCanEndSet()) return;
+      const [a, b] = this.liveDraft.cur;
+      this.liveDraft.sets.push([a, b]);
+      this.liveDraft.cur = [0, 0];
+      this.liveDraft.tb = null;
+      this.liveDraft = { ...this.liveDraft };
+      this.persistLive();
+    },
+
+    async persistLive() {
+      if (!this.liveMatch) return;
+      const key = this.liveMatch.key;
+      // optimistic local update
+      const newLive = { ...this.live };
+      newLive[key] = {
+        sets: this.liveDraft.sets.map(s => [s[0], s[1]]),
+        cur:  [this.liveDraft.cur[0], this.liveDraft.cur[1]],
+        tb:   this.liveDraft.tb ? [this.liveDraft.tb[0], this.liveDraft.tb[1]] : null,
+        updatedAt: new Date().toISOString()
+      };
+      this.live = newLive;
+
+      if (this.backendMode !== 'api') return;
+      this.livePending = true;
+      this.liveError = '';
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this._adminPassword) headers['X-Admin-Password'] = this._adminPassword;
+        const r = await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(this.liveDraft)
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this.liveError = data.error || 'Грешка при запис';
+          this.showToast('⚠️ ' + this.liveError);
+          this.livePending = false;
+          return;
+        }
+        this.livePending = false;
+        if (data.finalized) {
+          // Server promoted live → results
+          this._fromServer = true;
+          const newResults = { ...this.results };
+          newResults[key] = data.result;
+          this.results = newResults;
+          const ll = { ...this.live };
+          delete ll[key];
+          this.live = ll;
+          if (this.schedule[key]) {
+            const ns = { ...this.schedule };
+            delete ns[key];
+            this.schedule = ns;
+          }
+          Promise.resolve().then(() => { this._fromServer = false; });
+          this.closeLive();
+          this.showToast('🏆 Финализирано: ' + data.result.join(':'));
+        }
+      } catch (e) {
+        this.liveError = 'Мрежова грешка';
+        this.showToast('⚠️ ' + this.liveError);
+        this.livePending = false;
+      }
+    },
+
+    async clearLive(match) {
+      if (!this.isAdmin || !match) return;
+      if (!confirm('Изтрий live резултата за този мач?')) return;
+      const key = match.key;
+      // optimistic local
+      const ll = { ...this.live };
+      delete ll[key];
+      this.live = ll;
+      if (this.backendMode !== 'api') return;
+      try {
+        await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
+          method: 'DELETE',
+          headers: { 'X-Admin-Password': this._adminPassword || '' }
+        });
+      } catch (e) {}
+    },
+
+    // Today's matches that are not yet played (for the "today" banner)
+    get todaysMatches() {
+      const t = this.todayISO();
+      return this.matches.filter(m =>
+        !m.played && m.scheduledAt && m.scheduledAt.slice(0, 10) === t
+      );
+    },
+
+    get liveMatchesList() {
+      const list = [];
+      for (const key in this.live) {
+        const m = this.matchByPair[key];
+        if (m && !m.played) list.push(m);
+      }
+      return list;
     },
 
     // ======= EXPORT / IMPORT =======
