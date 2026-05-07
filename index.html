@@ -398,22 +398,23 @@
             </button>
           </div>
 
-          <div class="chip-row scrollable">
-            <button class="chip" :class="{active: matchFilter==='scheduled'}" @click="matchFilter='scheduled'">
-              📅 Планирани · <span x-text="scheduledMatches.length"></span>
-            </button>
-            <button class="chip" :class="{active: matchFilter==='pending'}" @click="matchFilter='pending'">
-              ⏳ Чакащи · <span x-text="matches.filter(m=>!m.played && !m.scheduledAt).length"></span>
-            </button>
-            <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">
-              ✓ Изиграни · <span x-text="playedMatches.length"></span>
-            </button>
-            <button class="chip" :class="{active: matchFilter==='all'}" @click="matchFilter='all'">
-              Всички
-            </button>
+          <div class="admin-toolbar">
+            <div class="chip-row scrollable">
+              <button class="chip" :class="{active: matchFilter==='scheduled'}" @click="matchFilter='scheduled'">
+                📅 Планирани · <span x-text="scheduledMatches.length"></span>
+              </button>
+              <button class="chip" :class="{active: matchFilter==='pending'}" @click="matchFilter='pending'">
+                ⏳ Чакащи · <span x-text="matches.filter(m=>!m.played && !m.scheduledAt).length"></span>
+              </button>
+              <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">
+                ✓ Изиграни · <span x-text="playedMatches.length"></span>
+              </button>
+              <button class="chip" :class="{active: matchFilter==='all'}" @click="matchFilter='all'">
+                Всички
+              </button>
+            </div>
+            <input type="search" x-model="matchSearch" placeholder="🔍 Търси играч..." class="admin-search" />
           </div>
-
-          <input type="search" x-model="matchSearch" placeholder="🔍 Търси играч..." class="admin-search" />
 
           <div class="admin-list">
             <template x-for="m in filteredMatches" :key="m.key">
@@ -599,8 +600,35 @@
         </div>
       </template>
 
-      <!-- STEP 1: Player A -->
+      <!-- STEP 1: Player A (with scheduled shortcuts for result mode) -->
       <div class="wizard-step" x-show="wizard.step === 1">
+        <template x-if="wizard.mode === 'result' && scheduledMatches.length > 0">
+          <div>
+            <div class="wizard-section-title">📅 Планирани мачове · бързо записване</div>
+            <div class="scheduled-shortcuts">
+              <template x-for="m in scheduledMatches" :key="m.key">
+                <button class="scheduled-shortcut" @click="wizardPickScheduledForResult(m)">
+                  <div class="scheduled-shortcut-top">
+                    <span class="scheduled-shortcut-rel" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
+                    <span class="scheduled-shortcut-time" x-text="formatDate(m.scheduledAt)"></span>
+                  </div>
+                  <div class="scheduled-shortcut-vs">
+                    <div class="ssvs-player">
+                      <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                      <span x-text="m.p1"></span>
+                    </div>
+                    <span class="ssvs-sep">vs</span>
+                    <div class="ssvs-player right">
+                      <span x-text="m.p2"></span>
+                      <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                    </div>
+                  </div>
+                </button>
+              </template>
+            </div>
+            <div class="wizard-section-title">Или избери играч ръчно</div>
+          </div>
+        </template>
         <div class="player-grid">
           <template x-for="p in players" :key="p">
             <button class="player-btn" @click="wizardSelectA(p)">

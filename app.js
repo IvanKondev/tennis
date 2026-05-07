@@ -475,6 +475,13 @@ document.addEventListener('alpine:init', () => {
       this.wizard.step = 2;
     },
 
+    // Quick pick: skip player selection — both players known from scheduled match
+    wizardPickScheduledForResult(match) {
+      this.wizard.playerA = match.p1;
+      this.wizard.playerB = match.p2;
+      this.wizard.step = 3;
+    },
+
     wizardSelectB(p) {
       this.wizard.playerB = p;
       // Pre-fill with existing schedule if present
