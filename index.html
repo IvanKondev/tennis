@@ -597,7 +597,7 @@
                     <button class="btn-mini btn-danger" @click="if(confirm('Откажи планираната дата?')) clearSchedule(m)">✕</button>
                   </template>
                   <template x-if="isMatchLive(m)">
-                    <button class="btn-mini btn-danger" @click="clearLive(m)" title="Изтрий live">✕ Live</button>
+                    <button class="btn-mini btn-danger" @click="clearLive(m)" title="Изтрий live (необратимо)">🗑 Изтрий live</button>
                   </template>
                   <template x-if="m.played">
                     <button class="btn-mini" @click="openScore(m)">✎ Редактирай</button>
@@ -1013,6 +1013,12 @@
           <template x-if="liveDraft.tb">
             <button class="live-end-set ghost" @click="liveExitTiebreak()">
               ↩ Откажи tiebreak
+            </button>
+          </template>
+
+          <template x-if="liveCanUndoSet()">
+            <button class="live-end-set ghost" @click="liveUndoLastSet()">
+              ↶ Върни последния сет
             </button>
           </template>
 

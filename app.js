@@ -320,10 +320,25 @@ document.addEventListener('alpine:init', () => {
         // toast distinction below.
         const oldLiveStr = JSON.stringify(this.live || {});
 
+        // Race protection: a poll may arrive while we have an in-flight live
+        // POST. The server's GET handler can run before the POST handler,
+        // returning state without the entry we just optimistically added.
+        // Keep keys we wrote locally within the last 3 seconds.
+        const serverLive = data.live || {};
+        const mergedLive = { ...serverLive };
+        const recent = this._recentLocalLive || {};
+        const PROTECT_MS = 3000;
+        for (const k in (this.live || {})) {
+          if (serverLive[k]) continue;
+          if (recent[k] && (now - recent[k]) < PROTECT_MS) {
+            mergedLive[k] = this.live[k];
+          }
+        }
+
         this._fromServer = true;
         this.results = data.results || {};
         this.schedule = data.schedule || {};
-        this.live = data.live || {};
+        this.live = mergedLive;
         this._dataETag = newETag;
         // Clear flag after watchers fire (microtask)
         Promise.resolve().then(() => { this._fromServer = false; });
@@ -1063,6 +1078,29 @@ document.addEventListener('alpine:init', () => {
       this.persistLive();
     },
 
+    // Visible only when current set is fresh (0:0) and there's a previous
+    // completed set to bring back. Prevents accidental clicks while in play.
+    liveCanUndoSet() {
+      return !this.liveDraft.tb &&
+             this.liveDraft.sets.length > 0 &&
+             this.liveDraft.cur[0] === 0 &&
+             this.liveDraft.cur[1] === 0;
+    },
+
+    // Pop last completed set and restore it as the current in-progress set.
+    // User can then ←/→ correct individual games or end the set with the
+    // right score.
+    liveUndoLastSet() {
+      if (!this.liveCanUndoSet()) return;
+      const last = this.liveDraft.sets[this.liveDraft.sets.length - 1];
+      this.liveDraft = {
+        sets: this.liveDraft.sets.slice(0, -1),
+        cur: [last[0], last[1]],
+        tb: null
+      };
+      this.persistLive();
+    },
+
     liveEndCurrentSet() {
       if (!this.liveCanEndSet()) return;
       const [a, b] = this.liveDraft.cur;
@@ -1076,6 +1114,10 @@ document.addEventListener('alpine:init', () => {
     async persistLive() {
       if (!this.liveMatch) return;
       const key = this.liveMatch.key;
+      // Mark this key as recently locally-written so a racing poll's pre-POST
+      // server snapshot can't overwrite our optimistic update with empty state.
+      this._recentLocalLive = this._recentLocalLive || {};
+      this._recentLocalLive[key] = Date.now();
       // optimistic local update + immediate localStorage save
       // (so a refresh before POST completes still recovers the state)
       const newLive = { ...this.live };
@@ -1134,7 +1176,7 @@ document.addEventListener('alpine:init', () => {
 
     async clearLive(match) {
       if (!this.isAdmin || !match) return;
-      if (!confirm('Изтрий live резултата за този мач?')) return;
+      if (!confirm('⚠️ Това ще ИЗТРИЕ текущия live резултат — всички въведени геймове и сетове.\n\nНе може да се възстанови. Сигурен ли си?')) return;
       const key = match.key;
       // Optimistic local removal
       const ll = { ...this.live };
@@ -1151,7 +1193,9 @@ document.addEventListener('alpine:init', () => {
         });
         if (!r.ok) {
           this.showToast('⚠️ Грешка при изтриване на live');
+          return;
         }
+        this.showToast('🗑 Live изтрит. За нов — натисни "🔴 На живо" на мача.');
       } catch (e) {
         this.showToast('⚠️ Мрежова грешка при изтриване на live');
       }
