@@ -214,6 +214,29 @@
         </div>
       </template>
 
+      <!-- Recent results — last 5 finished matches with timestamps -->
+      <template x-if="recentResults.length > 0">
+        <div class="recent-results">
+          <div class="recent-results-head">🏆 Последни резултати</div>
+          <template x-for="r in recentResults" :key="r.key">
+            <div class="recent-result-row" @click="jumpToPlayer(r.match.winner)">
+              <div class="rr-side" :class="{winner: r.match.winner === r.match.p1}">
+                <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p1)}`" x-text="initials(r.match.p1)"></span>
+                <span class="rr-name" x-text="r.match.p1"></span>
+              </div>
+              <div class="rr-score">
+                <span :class="{won: r.match.s1 > r.match.s2}" x-text="r.match.s1"></span><span class="rr-colon">:</span><span :class="{won: r.match.s2 > r.match.s1}" x-text="r.match.s2"></span>
+              </div>
+              <div class="rr-side right" :class="{winner: r.match.winner === r.match.p2}">
+                <span class="rr-name" x-text="r.match.p2"></span>
+                <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p2)}`" x-text="initials(r.match.p2)"></span>
+              </div>
+              <div class="rr-time" x-text="timeFromNow(r.recordedAt)"></div>
+            </div>
+          </template>
+        </div>
+      </template>
+
       <!-- Podium -->
       <template x-if="standings[0] && standings[0].played > 0">
         <div class="podium">
@@ -293,43 +316,52 @@
           <p>Админът може да планира мачове от админ панела.</p>
         </div>
       </template>
-      <div class="upcoming-list">
-        <template x-for="m in scheduledMatches" :key="m.key">
-          <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
-            <div class="upcoming-date-row">
-              <div class="upcoming-date">
-                <span x-text="formatDateLong(m.scheduledAt)"></span>
-              </div>
-              <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
-            </div>
-            <div class="upcoming-vs">
-              <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
-                <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
-                <span class="upcoming-name" x-text="m.p1"></span>
-              </div>
-              <div class="upcoming-vs-sep">VS</div>
-              <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
-                <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
-                <span class="upcoming-name" x-text="m.p2"></span>
-              </div>
-            </div>
-            <template x-if="isMatchLive(m)">
-              <div class="live-strip" @click="openLive(m)">
-                <span class="live-dot"></span>
-                <span class="live-label">НА ЖИВО</span>
-                <span class="live-score" x-text="formatLiveScore(m)"></span>
-                <span class="live-arrow">→</span>
-              </div>
-            </template>
-            <template x-if="canWriteToday(m) && !isMatchLive(m)">
-              <div class="today-actions">
-                <button class="btn-live" @click="openLive(m)">🔴 На живо</button>
-                <button class="btn-final" @click="openScore(m)">🏁 Краен резултат</button>
+      <template x-for="grp in [
+        { key: 'today', label: '📅 Днес', items: groupedScheduledMatches.today },
+        { key: 'thisWeek', label: '🗓 Тази седмица', items: groupedScheduledMatches.thisWeek },
+        { key: 'later', label: '⏭ Следващи седмици', items: groupedScheduledMatches.later }
+      ]" :key="grp.key">
+        <div class="upcoming-group" x-show="grp.items.length > 0">
+          <h3 class="upcoming-group-head" x-text="grp.label"></h3>
+          <div class="upcoming-list">
+            <template x-for="m in grp.items" :key="m.key">
+              <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
+                <div class="upcoming-date-row">
+                  <div class="upcoming-date">
+                    <span x-text="formatDateLong(m.scheduledAt)"></span>
+                  </div>
+                  <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
+                </div>
+                <div class="upcoming-vs">
+                  <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
+                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                    <span class="upcoming-name" x-text="m.p1"></span>
+                  </div>
+                  <div class="upcoming-vs-sep">VS</div>
+                  <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
+                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                    <span class="upcoming-name" x-text="m.p2"></span>
+                  </div>
+                </div>
+                <template x-if="isMatchLive(m)">
+                  <div class="live-strip" @click="openLive(m)">
+                    <span class="live-dot"></span>
+                    <span class="live-label">НА ЖИВО</span>
+                    <span class="live-score" x-text="formatLiveScore(m)"></span>
+                    <span class="live-arrow">→</span>
+                  </div>
+                </template>
+                <template x-if="canWriteToday(m) && !isMatchLive(m)">
+                  <div class="today-actions">
+                    <button class="btn-live" @click="openLive(m)">🔴 На живо</button>
+                    <button class="btn-final" @click="openScore(m)">🏁 Краен резултат</button>
+                  </div>
+                </template>
               </div>
             </template>
           </div>
-        </template>
-      </div>
+        </div>
+      </template>
     </section>
 
     <!-- ===== MATCHES ===== -->
@@ -1024,19 +1056,22 @@
             </button>
           </div>
 
-          <!-- Undo controls -->
+          <!-- Undo controls — aligned under each column above -->
           <div class="live-undo-row">
             <button
               class="live-undo"
               @click.stop="liveSubPoint(0)"
               :disabled="(liveDraft.tb ? liveDraft.tb[0] : liveDraft.cur[0]) === 0">
-              ← <span x-text="liveMatch.p1"></span>
+              <span class="live-undo-icon">−</span>
+              <span>1 гейм</span>
             </button>
+            <div class="live-undo-mid"></div>
             <button
               class="live-undo"
               @click.stop="liveSubPoint(1)"
               :disabled="(liveDraft.tb ? liveDraft.tb[1] : liveDraft.cur[1]) === 0">
-              <span x-text="liveMatch.p2"></span> →
+              <span class="live-undo-icon">−</span>
+              <span>1 гейм</span>
             </button>
           </div>
 
@@ -1085,6 +1120,56 @@
           <p class="live-hint">
             Авто-финал при <strong>2 спечелени сета</strong>.
           </p>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ===== FINALIZE CONFIRM MODAL (best-of-3 reached) ===== -->
+  <div class="modal-backdrop finalize-backdrop" x-show="pendingFinalize" @click.self="cancelFinalize()" x-transition.opacity style="display:none">
+    <div class="modal finalize-modal" x-show="pendingFinalize" x-transition>
+      <template x-if="pendingFinalize">
+        <div>
+          <div class="modal-head">
+            <button class="btn-close" @click="cancelFinalize()">✕</button>
+            <h3>Приключване на мача?</h3>
+            <div style="width:36px"></div>
+          </div>
+
+          <div class="finalize-trophy">🏆</div>
+
+          <div class="finalize-winner">
+            <span class="avatar xl" :style="`--avatar-hue:${playerHue(pendingFinalize.winner)}`" x-text="initials(pendingFinalize.winner)"></span>
+            <div class="finalize-winner-name" x-text="pendingFinalize.winner"></div>
+            <div class="finalize-winner-label">печели</div>
+          </div>
+
+          <div class="finalize-score">
+            <span class="finalize-score-num" :class="{lose: pendingFinalize.setsA < pendingFinalize.setsB}" x-text="pendingFinalize.setsA"></span>
+            <span class="finalize-score-colon">:</span>
+            <span class="finalize-score-num" :class="{lose: pendingFinalize.setsB < pendingFinalize.setsA}" x-text="pendingFinalize.setsB"></span>
+          </div>
+          <div class="finalize-score-vs">
+            <span x-text="liveMatch && liveMatch.p1"></span>
+            <span class="finalize-score-vs-sep">vs</span>
+            <span x-text="liveMatch && liveMatch.p2"></span>
+          </div>
+
+          <p class="finalize-hint">
+            Тенисът се играе до <strong>2 спечелени сета</strong>.
+            След "Да" резултатът се записва финално.
+          </p>
+
+          <div class="finalize-actions">
+            <button class="finalize-btn cancel" @click="cancelFinalize()">
+              <span class="finalize-btn-icon">↩</span>
+              <span>Не, искам да коригирам</span>
+            </button>
+            <button class="finalize-btn confirm" @click="confirmFinalize()">
+              <span class="finalize-btn-icon">✓</span>
+              <span>Да, приключи мача</span>
+            </button>
+          </div>
         </div>
       </template>
     </div>

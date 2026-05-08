@@ -5,6 +5,10 @@ document.addEventListener('alpine:init', () => {
     results: {},
     schedule: {},
     live: {},
+    // Per-key timestamp of when a result was recorded. Used to show recent
+    // matches on the standings page. Old (seeded) results have no entry here
+    // and don't appear in the recent feed — that's intentional.
+    resultsRecordedAt: {},
     passwordHash: null,
     isAdmin: false,
 
@@ -25,6 +29,11 @@ document.addEventListener('alpine:init', () => {
     livePending: false,
     liveError: '',
     todayPicker: null,    // when set, shows "live or final?" chooser modal
+
+    // Match finalization confirmation modal. Set when a tap would record a
+    // 2nd-set victory (best of 3). User can confirm or cancel; cancel runs
+    // the optional onCancel callback (e.g. to undo a TB increment).
+    pendingFinalize: null,  // { setsA, setsB, winner, onConfirm, onCancel }
 
     wizard: {
       open: false,
@@ -115,6 +124,17 @@ document.addEventListener('alpine:init', () => {
       // Listen for service worker update readiness (dispatched from index.html).
       window.addEventListener('sw-update-available', () => {
         this.swUpdateReady = true;
+        // Auto-reload after 30s for users who don't realise they should tap
+        // the banner. Defer if they're in the middle of something (modal,
+        // live scoring) — we don't want to interrupt active input.
+        const tryAutoReload = () => {
+          if (this.isUserBusy() || this.liveMatch) {
+            setTimeout(tryAutoReload, 5000);
+          } else {
+            window.location.reload();
+          }
+        };
+        setTimeout(tryAutoReload, 30000);
       });
     },
 
@@ -210,6 +230,7 @@ document.addEventListener('alpine:init', () => {
             this.results = data.results || {};
             this.schedule = data.schedule || {};
             this.live = data.live || {};
+            this.resultsRecordedAt = data.resultsRecordedAt || {};
 
             // Recover live state where local is newer than server's
             // (e.g. user added a game but POST didn't reach server before refresh)
@@ -227,6 +248,7 @@ document.addEventListener('alpine:init', () => {
           this.results = data.results || {};
           this.schedule = data.schedule || {};
           this.live = data.live || {};
+          this.resultsRecordedAt = data.resultsRecordedAt || {};
           this.passwordHash = data.passwordHash || null;
           return;
         }
@@ -248,6 +270,7 @@ document.addEventListener('alpine:init', () => {
         results: this.results,
         schedule: this.schedule,
         live: this.live,
+        resultsRecordedAt: this.resultsRecordedAt,
         passwordHash: this.passwordHash
       }));
     },
@@ -269,7 +292,8 @@ document.addEventListener('alpine:init', () => {
           body: JSON.stringify({
             results: this.results,
             schedule: this.schedule,
-            live: this.live
+            live: this.live,
+            resultsRecordedAt: this.resultsRecordedAt
           })
         });
         if (!r.ok) throw new Error('save failed: ' + r.status);
@@ -308,7 +332,8 @@ document.addEventListener('alpine:init', () => {
       // Note: liveMatch is excluded — we WANT live data refreshes while scoring.
       return !!(this.scoreMatch || this.scheduleMatch ||
                 this.wizard.open || this.playerPicker.open ||
-                this.todayPicker || this.saveStatus === 'saving');
+                this.todayPicker || this.pendingFinalize ||
+                this.saveStatus === 'saving');
     },
 
     get hasActiveLive() {
@@ -356,6 +381,7 @@ document.addEventListener('alpine:init', () => {
         this.results = data.results || {};
         this.schedule = data.schedule || {};
         this.live = mergedLive;
+        this.resultsRecordedAt = data.resultsRecordedAt || {};
         this._dataETag = newETag;
         // Clear flag after watchers fire (microtask)
         Promise.resolve().then(() => { this._fromServer = false; });
@@ -571,6 +597,12 @@ document.addEventListener('alpine:init', () => {
       const newResults = { ...this.results };
       newResults[match.key] = [s1, s2];
       this.results = newResults;
+      // Stamp recordedAt so this shows up in "recent results". For non-admin
+      // path the server overrides with its own timestamp on next poll —
+      // local stamp is just for instant UI feedback.
+      const newRecorded = { ...this.resultsRecordedAt };
+      newRecorded[match.key] = new Date().toISOString();
+      this.resultsRecordedAt = newRecorded;
       if (this.schedule[match.key]) {
         const newSchedule = { ...this.schedule };
         delete newSchedule[match.key];
@@ -613,6 +645,9 @@ document.addEventListener('alpine:init', () => {
       const newResults = { ...this.results };
       delete newResults[match.key];
       this.results = newResults;
+      const newRecorded = { ...this.resultsRecordedAt };
+      delete newRecorded[match.key];
+      this.resultsRecordedAt = newRecorded;
     },
 
     setSchedule(match, isoString) {
@@ -1049,6 +1084,39 @@ document.addEventListener('alpine:init', () => {
       return !this.liveDraft.tb && this.liveCurSetWonByLeader();
     },
 
+    // If proposedSets would finalize the match (one player at 2 sets won),
+    // shows the styled confirm modal instead of the native confirm() dialog.
+    // The actual state mutation is deferred until the user accepts.
+    _maybeAskFinalize(proposedSets, onConfirm, onCancel) {
+      let a = 0, b = 0;
+      for (const [x, y] of proposedSets) {
+        if (x > y) a++;
+        else if (y > x) b++;
+      }
+      if (a < 2 && b < 2) {
+        onConfirm();
+        return;
+      }
+      this.pendingFinalize = {
+        setsA: a, setsB: b,
+        winner: a > b ? this.liveMatch.p1 : this.liveMatch.p2,
+        onConfirm,
+        onCancel: onCancel || null
+      };
+    },
+
+    confirmFinalize() {
+      const cb = this.pendingFinalize && this.pendingFinalize.onConfirm;
+      this.pendingFinalize = null;
+      if (cb) cb();
+    },
+
+    cancelFinalize() {
+      const cb = this.pendingFinalize && this.pendingFinalize.onCancel;
+      this.pendingFinalize = null;
+      if (cb) cb();
+    },
+
     liveAddPoint(playerIdx) {
       // playerIdx: 0 (p1) or 1 (p2)
       if (this.liveDraft.tb) {
@@ -1056,11 +1124,27 @@ document.addEventListener('alpine:init', () => {
         const [t0, t1] = this.liveDraft.tb;
         if ((t0 >= 7 || t1 >= 7) && Math.abs(t0 - t1) >= 2) {
           // tiebreak won → set is recorded as 7:6
-          const winner = t0 > t1 ? 0 : 1;
-          const newSet = winner === 0 ? [7, 6] : [6, 7];
-          this.liveDraft.sets.push(newSet);
-          this.liveDraft.cur = [0, 0];
-          this.liveDraft.tb = null;
+          const tbWinner = t0 > t1 ? 0 : 1;
+          const newSet = tbWinner === 0 ? [7, 6] : [6, 7];
+          const proposedSets = [...this.liveDraft.sets, newSet];
+          this._maybeAskFinalize(
+            proposedSets,
+            () => {
+              // Confirmed: commit the set, reset cur/tb, persist
+              this.liveDraft.sets.push(newSet);
+              this.liveDraft.cur = [0, 0];
+              this.liveDraft.tb = null;
+              this.liveDraft = { ...this.liveDraft };
+              this.persistLive();
+            },
+            () => {
+              // Cancelled: undo the TB increment so we don't re-prompt
+              this.liveDraft.tb[playerIdx]--;
+              this.liveDraft = { ...this.liveDraft };
+              this.persistLive();
+            }
+          );
+          return;
         }
       } else {
         this.liveDraft.cur[playerIdx]++;
@@ -1121,11 +1205,15 @@ document.addEventListener('alpine:init', () => {
     liveEndCurrentSet() {
       if (!this.liveCanEndSet()) return;
       const [a, b] = this.liveDraft.cur;
-      this.liveDraft.sets.push([a, b]);
-      this.liveDraft.cur = [0, 0];
-      this.liveDraft.tb = null;
-      this.liveDraft = { ...this.liveDraft };
-      this.persistLive();
+      const proposedSets = [...this.liveDraft.sets, [a, b]];
+      this._maybeAskFinalize(proposedSets, () => {
+        this.liveDraft.sets.push([a, b]);
+        this.liveDraft.cur = [0, 0];
+        this.liveDraft.tb = null;
+        this.liveDraft = { ...this.liveDraft };
+        this.persistLive();
+      });
+      // No onCancel: cancel just leaves cur unchanged; user can ←/→ to fix.
     },
 
     async persistLive() {
@@ -1172,6 +1260,9 @@ document.addEventListener('alpine:init', () => {
           const newResults = { ...this.results };
           newResults[key] = data.result;
           this.results = newResults;
+          const newRecorded = { ...this.resultsRecordedAt };
+          newRecorded[key] = new Date().toISOString();
+          this.resultsRecordedAt = newRecorded;
           const ll = { ...this.live };
           delete ll[key];
           this.live = ll;
@@ -1292,7 +1383,8 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
-    // Human-readable relative time in minutes/hours, for "10:30 — преди 30мин".
+    // Human-readable relative time. Used for both "scheduled at" countdown
+    // and "result recorded at" history.
     timeFromNow(iso) {
       if (!iso) return '';
       const d = new Date(iso);
@@ -1302,7 +1394,45 @@ document.addEventListener('alpine:init', () => {
       if (diffMin < 0) return 'след ' + (-diffMin) + 'мин';
       if (diffMin < 1) return 'сега';
       if (diffMin < 60) return 'преди ' + diffMin + 'мин';
-      return 'преди ' + Math.round(diffMin / 60) + 'ч';
+      if (diffMin < 60 * 24) return 'преди ' + Math.round(diffMin / 60) + 'ч';
+      if (diffMin < 60 * 24 * 7) return 'преди ' + Math.round(diffMin / (60 * 24)) + 'д';
+      return d.toLocaleDateString('bg-BG', { day: 'numeric', month: 'short' });
+    },
+
+    // Group scheduledMatches into 3 buckets for the Upcoming view.
+    // Boundaries: today / rest of this calendar week (through Sunday) / later.
+    get groupedScheduledMatches() {
+      const todayStr = this.todayISO();
+      const today = new Date(todayStr + 'T00:00:00');
+      const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
+      // Days until next Monday: Sun→1, Mon→7, Tue→6, Wed→5, ..., Sat→2.
+      const daysUntilNextMonday = ((8 - dayOfWeek) % 7) || 7;
+      const startOfNextWeek = new Date(today);
+      startOfNextWeek.setDate(startOfNextWeek.getDate() + daysUntilNextMonday);
+      const nextWeekStr = this.toISODate(startOfNextWeek);
+
+      const groups = { today: [], thisWeek: [], later: [] };
+      for (const m of this.scheduledMatches) {
+        const d = m.scheduledAt.slice(0, 10);
+        if (d === todayStr) groups.today.push(m);
+        else if (d < nextWeekStr) groups.thisWeek.push(m);
+        else groups.later.push(m);
+      }
+      return groups;
+    },
+
+    // Most recent N played matches with timestamps. Seeded results have no
+    // timestamp and never appear here — by design (they're not "recent").
+    get recentResults() {
+      const out = [];
+      for (const k in (this.resultsRecordedAt || {})) {
+        const ts = this.resultsRecordedAt[k];
+        const m = this.matchByPair[k];
+        if (!m || !m.played || !ts) continue;
+        out.push({ key: k, match: m, recordedAt: ts });
+      }
+      out.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+      return out.slice(0, 5);
     },
 
     get liveMatchesList() {

@@ -326,6 +326,22 @@ main {
 
 /* ===== UPCOMING ===== */
 .upcoming-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* Sectioned upcoming view: Today / This week / Later */
+.upcoming-group + .upcoming-group { margin-top: 24px; }
+.upcoming-group-head {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--accent-2);
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  padding: 0 4px 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .upcoming-card {
   background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
   border: 1px solid var(--line);
@@ -1930,6 +1946,78 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   color: #fde68a;
 }
 
+/* --- Recent results — compact list, last finished matches --- */
+.recent-results {
+  margin: 0 0 16px;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.recent-results-head {
+  font-weight: 800;
+  font-size: 11px;
+  color: var(--accent-2);
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  padding: 0 2px 10px;
+}
+.recent-result-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.recent-result-row + .recent-result-row { border-top: 1px solid var(--line); }
+.recent-result-row:hover { background: var(--bg-2); }
+
+.rr-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rr-side.right { justify-content: flex-end; }
+.rr-side .rr-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rr-side.winner .rr-name { color: var(--text); font-weight: 800; }
+
+.rr-score {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  letter-spacing: 1px;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+.rr-score .won { color: var(--accent-2); }
+.rr-colon { color: var(--text-faint); padding: 0 1px; }
+
+.rr-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+@media (max-width: 480px) {
+  .recent-result-row { grid-template-columns: 1fr auto 1fr; gap: 6px; }
+  .rr-time { grid-column: 1 / -1; text-align: right; padding-top: 2px; }
+  .rr-side .rr-name { font-size: 12px; }
+}
+
 /* --- Today banner — compact, dark theme --- */
 .today-banner {
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
@@ -2140,6 +2228,131 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   border: 1px solid var(--line);
 }
 .live-backdrop { z-index: 100; }
+
+/* === FINALIZE-MATCH CONFIRM MODAL === */
+.finalize-backdrop {
+  z-index: 220; /* above live-modal so it stacks correctly */
+  background: rgba(0,0,0,0.78);
+}
+.finalize-modal {
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 60px var(--accent-glow);
+}
+.finalize-trophy {
+  text-align: center;
+  font-size: 64px;
+  margin-top: 8px;
+  filter: drop-shadow(0 8px 24px var(--accent-glow));
+  animation: finalize-pop 0.4s ease-out;
+}
+@keyframes finalize-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.finalize-winner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 12px;
+}
+.finalize-winner-name {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 36px;
+  letter-spacing: 1.5px;
+  color: var(--accent-2);
+  text-shadow: 0 0 16px var(--accent-glow);
+  line-height: 1;
+}
+.finalize-winner-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.finalize-score {
+  text-align: center;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 96px;
+  letter-spacing: 6px;
+  line-height: 1;
+  margin: 8px 0 4px;
+}
+.finalize-score-num { color: var(--accent-2); text-shadow: 0 0 18px var(--accent-glow); }
+.finalize-score-num.lose { color: var(--text-faint); text-shadow: none; }
+.finalize-score-colon { color: var(--text-faint); padding: 0 12px; }
+
+.finalize-score-vs {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.5px;
+  padding: 0 16px 16px;
+}
+.finalize-score-vs-sep { color: var(--text-faint); padding: 0 10px; }
+
+.finalize-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 12px 20px 16px;
+  line-height: 1.5;
+  border-top: 1px solid var(--line);
+}
+.finalize-hint strong { color: var(--text-2); font-weight: 700; }
+
+.finalize-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  padding: 0 16px 20px;
+}
+.finalize-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: transform 0.1s, box-shadow 0.15s;
+  font-family: inherit;
+}
+.finalize-btn:active { transform: scale(0.98); }
+.finalize-btn-icon { font-size: 18px; }
+
+.finalize-btn.confirm {
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: #1a1208;
+  box-shadow: 0 6px 20px rgba(212,175,55,0.35), 0 0 0 1px rgba(212,175,55,0.5);
+}
+.finalize-btn.confirm:hover {
+  box-shadow: 0 8px 28px rgba(212,175,55,0.5), 0 0 0 1px var(--accent-2);
+}
+.finalize-btn.cancel {
+  background: var(--bg-3);
+  color: var(--text-2);
+  border-color: var(--line-strong);
+}
+.finalize-btn.cancel:hover {
+  background: rgba(224,124,138,0.12);
+  border-color: rgba(224,124,138,0.4);
+  color: var(--loss);
+}
+
+@media (min-width: 480px) {
+  .finalize-actions { flex-direction: row; }
+  .finalize-actions .finalize-btn { flex: 1; }
+}
 .live-modal-head {
   background: var(--bg-2);
   border-bottom: 1px solid var(--line);
@@ -2391,31 +2604,48 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   border-color: rgba(251,191,36,0.4);
 }
 
+/* Aligned with live-scoreboard (1fr auto 1fr) so each undo sits directly
+   under its player column — and we drop the player names since the column
+   above already shows them. */
 .live-undo-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr auto 1fr;
   gap: 8px;
-  padding: 10px 14px 6px;
+  padding: 8px 14px 6px;
+  align-items: center;
+}
+.live-undo-mid {
+  /* spacer matching the ":" column above */
+  min-width: 24px;
 }
 .live-undo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--text-dim);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 10px;
   font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   cursor: pointer;
-  font-weight: 600;
   transition: all 0.15s;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+.live-undo-icon {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
 }
 .live-undo:hover:not(:disabled) {
-  background: var(--bg-2);
-  color: var(--text);
+  background: rgba(224,124,138,0.08);
+  border-color: rgba(224,124,138,0.4);
+  color: var(--loss);
 }
-.live-undo:disabled { opacity: 0.35; cursor: not-allowed; }
+.live-undo:disabled { opacity: 0.3; cursor: not-allowed; }
 
 .live-end-set {
   display: block;

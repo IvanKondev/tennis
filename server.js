@@ -20,7 +20,7 @@ const VALID_KEYS = new Set(MATCHES_SEED.map(([a, b]) => a + '|' + b));
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({ results: {}, schedule: {}, live: {} }, null, 2));
+  fs.writeFileSync(DATA_FILE, JSON.stringify({ results: {}, schedule: {}, live: {}, resultsRecordedAt: {} }, null, 2));
   console.log('[init] Created empty data file at', DATA_FILE);
 }
 
@@ -127,6 +127,7 @@ function readData() {
   if (!d.results) d.results = {};
   if (!d.schedule) d.schedule = {};
   if (!d.live) d.live = {};
+  if (!d.resultsRecordedAt) d.resultsRecordedAt = {};
   return d;
 }
 
@@ -313,10 +314,15 @@ const server = http.createServer(async (req, res) => {
       for (const k in liveIn) {
         if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid live key: ' + k });
       }
+      const recordedIn = incoming.resultsRecordedAt || {};
+      for (const k in recordedIn) {
+        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid resultsRecordedAt key: ' + k });
+      }
       writeData({
         results: incoming.results,
         schedule: incoming.schedule,
-        live: liveIn
+        live: liveIn,
+        resultsRecordedAt: recordedIn
       });
       return json(res, 200, { ok: true });
     }
@@ -376,6 +382,7 @@ const server = http.createServer(async (req, res) => {
       let finalized = false;
       if (setsA >= 2 || setsB >= 2) {
         data.results[key] = [setsA, setsB];
+        data.resultsRecordedAt[key] = new Date().toISOString();
         delete data.live[key];
         if (data.schedule[key]) delete data.schedule[key];
         finalized = true;
@@ -422,6 +429,7 @@ const server = http.createServer(async (req, res) => {
       if (max !== 2 || min > 1) return json(res, 400, { error: 'invalid score' });
 
       data.results[key] = [s1, s2];
+      data.resultsRecordedAt[key] = new Date().toISOString();
       if (data.schedule[key]) delete data.schedule[key];
       if (data.live[key]) delete data.live[key];
       writeData(data);
