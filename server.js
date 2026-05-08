@@ -123,17 +123,23 @@ function validateLiveBody(body) {
   return { sets: cleanSets, cur: [ca, cb], tb: cleanTb };
 }
 
+// Content-based ETag, cached. Recomputed only on writeData() or first GET.
+let _dataETagCache = null;
 function dataETag() {
+  if (_dataETagCache) return _dataETagCache;
   try {
-    const s = fs.statSync(DATA_FILE);
-    return '"' + s.mtimeMs.toString(36) + '-' + s.size.toString(36) + '"';
+    const buf = fs.readFileSync(DATA_FILE);
+    _dataETagCache = '"' + crypto.createHash('md5').update(buf).digest('hex').slice(0, 16) + '"';
+    return _dataETagCache;
   } catch (e) { return '"empty"'; }
 }
 
 function writeData(data) {
   const tmp = DATA_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  const json = JSON.stringify(data, null, 2);
+  fs.writeFileSync(tmp, json);
   fs.renameSync(tmp, DATA_FILE);
+  _dataETagCache = '"' + crypto.createHash('md5').update(json).digest('hex').slice(0, 16) + '"';
 }
 
 function readBody(req) {
@@ -298,6 +304,43 @@ const server = http.createServer(async (req, res) => {
         live: data.live[key] || null,
         result: finalized ? data.results[key] : null
       });
+    }
+
+    // POST /api/match/<key>/result  → record final result
+    // Admin: always allowed. Non-admin: only on match day, must be scheduled.
+    const resultMatch = url.match(/^\/api\/match\/(.+)\/result$/);
+    if (resultMatch) {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+      const key = decodeURIComponent(resultMatch[1]);
+      if (!VALID_KEYS.has(key)) return json(res, 404, { error: 'no such match' });
+
+      const data = readData();
+      const isAdmin = checkAdmin(req);
+
+      if (!isAdmin) {
+        const sched = data.schedule[key];
+        if (!sched) return json(res, 403, { error: 'match not scheduled' });
+        if (sched.slice(0, 10) !== todayLocalISO()) {
+          return json(res, 403, { error: 'not match day' });
+        }
+      }
+
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch (e) { return json(res, 400, { error: 'invalid json' }); }
+      const s1 = clampInt(parsed && parsed.s1, 0, 2);
+      const s2 = clampInt(parsed && parsed.s2, 0, 2);
+      if (s1 === null || s2 === null) return json(res, 400, { error: 'invalid score' });
+      // Best-of-3: winner reaches 2, loser ≤ 1
+      const max = Math.max(s1, s2), min = Math.min(s1, s2);
+      if (max !== 2 || min > 1) return json(res, 400, { error: 'invalid score' });
+
+      data.results[key] = [s1, s2];
+      if (data.schedule[key]) delete data.schedule[key];
+      if (data.live[key]) delete data.live[key];
+      writeData(data);
+      return json(res, 200, { ok: true, result: [s1, s2] });
     }
 
     if (url === '/api/auth' && req.method === 'POST') {

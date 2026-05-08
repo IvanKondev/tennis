@@ -549,7 +549,37 @@ document.addEventListener('alpine:init', () => {
         delete newSchedule[match.key];
         this.schedule = newSchedule;
       }
+      // Drop any in-progress live state for this match — it's now finalized.
+      if (this.live[match.key]) {
+        const newLive = { ...this.live };
+        delete newLive[match.key];
+        this.live = newLive;
+      }
       this.scoreMatch = null;
+
+      // Non-admin on match day: persist() will bail (no admin pwd).
+      // Use the dedicated endpoint instead so the result reaches the server.
+      if (this.backendMode === 'api' && !this._adminPassword) {
+        this._submitResultRemote(match, s1, s2);
+      }
+    },
+
+    async _submitResultRemote(match, s1, s2) {
+      try {
+        const r = await fetch(this.apiBase + '/match/' + encodeURIComponent(match.key) + '/result', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ s1, s2 })
+        });
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          this.showToast('⚠️ ' + (data.error || 'Грешка при запис'));
+          return;
+        }
+        this.showToast('🏆 Резултат записан');
+      } catch (e) {
+        this.showToast('⚠️ Мрежова грешка');
+      }
     },
 
     clearResult(match) {
@@ -1226,6 +1256,7 @@ document.addEventListener('alpine:init', () => {
           if (!confirm('Това ще замени текущите данни. Продължи?')) return;
           this.results = data.results;
           this.schedule = data.schedule || {};
+          this.live = data.live || {};
         } catch (err) {
           alert('Грешка при четене: ' + err.message);
         }
