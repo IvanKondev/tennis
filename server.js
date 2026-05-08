@@ -196,18 +196,19 @@ function serveStatic(req, res, urlPath) {
     return res.end();
   }
 
-  const isHtml = cached.ext === '.html';
-  // sw.js must not be aggressively cached — browsers need to detect updates.
-  // Manifest is also small and changes when shell changes; play it safe.
-  const isShortCache = isHtml ||
-    filePath.endsWith('sw.js') ||
-    filePath.endsWith('manifest.webmanifest');
+  // We have no build step → asset URLs don't carry content hashes. If we set
+  // `immutable`, browsers won't revalidate for the full max-age window even
+  // after a deploy. So shell text assets get must-revalidate (cheap via ETag
+  // 304s); only images/fonts keep the long immutable cache.
+  const longCache = cached.ext === '.png' || cached.ext === '.jpg' ||
+                    cached.ext === '.ico' || cached.ext === '.woff' ||
+                    cached.ext === '.woff2';
   const headers = {
     'Content-Type': MIME[cached.ext] || 'application/octet-stream',
     'ETag': cached.etag,
-    'Cache-Control': isShortCache
-      ? 'public, max-age=0, must-revalidate'
-      : 'public, max-age=604800, immutable'
+    'Cache-Control': longCache
+      ? 'public, max-age=604800, immutable'
+      : 'public, max-age=0, must-revalidate'
   };
 
   // Prefer Brotli over Gzip if both supported.
