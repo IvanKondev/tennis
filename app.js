@@ -362,26 +362,58 @@ document.addEventListener('alpine:init', () => {
         // toast distinction below.
         const oldLiveStr = JSON.stringify(this.live || {});
 
-        // Race protection: a poll may arrive while we have an in-flight live
-        // POST. The server's GET handler can run before the POST handler,
-        // returning state without the entry we just optimistically added.
-        // Keep keys we wrote locally within the last 3 seconds.
+        // === Race protection for stale polls ===
+        // Two failure modes a poll can introduce:
+        //   1) It fetched state BEFORE our recent local write reached server,
+        //      so server's response is missing entries we just wrote.
+        //   2) It fetched state BEFORE our recent finalize, so server's
+        //      response still has live[key] AND missing results[key].
+        // Defense: keep any local entry whose timestamp is recent (3s window).
+        const PROTECT_MS = 5000;
+
+        // Results: protected by resultsRecordedAt timestamp.
+        const serverResults = data.results || {};
+        const serverRecorded = data.resultsRecordedAt || {};
+        const mergedResults = { ...serverResults };
+        const mergedRecorded = { ...serverRecorded };
+        for (const k in (this.resultsRecordedAt || {})) {
+          if (mergedResults[k]) continue;  // server has this — server wins
+          const ts = this.resultsRecordedAt[k];
+          if (!ts) continue;
+          if (now - new Date(ts).getTime() < PROTECT_MS && this.results[k]) {
+            mergedResults[k] = this.results[k];
+            mergedRecorded[k] = ts;
+          }
+        }
+
+        // Live: protected by _recentLocalLive timestamp + drop if results.
         const serverLive = data.live || {};
         const mergedLive = { ...serverLive };
-        const recent = this._recentLocalLive || {};
-        const PROTECT_MS = 3000;
-        for (const k in (this.live || {})) {
-          if (serverLive[k]) continue;
-          if (recent[k] && (now - recent[k]) < PROTECT_MS) {
+        // If a result exists for the key (locally or server), the match is
+        // over — drop any live entry for it.
+        for (const k in mergedLive) {
+          if (mergedResults[k]) delete mergedLive[k];
+        }
+        // Iterate over keys we recently wrote (added OR cleared). For each:
+        //   - if result exists → drop from live (match finalized)
+        //   - if local has entry → force into merged (server stale)
+        //   - if local doesn't have entry → drop from merged (we cleared it)
+        const recentLive = this._recentLocalLive || {};
+        for (const k in recentLive) {
+          if ((now - recentLive[k]) >= PROTECT_MS) continue;
+          if (mergedResults[k]) { delete mergedLive[k]; continue; }
+          if (this.live[k]) {
             mergedLive[k] = this.live[k];
+          } else {
+            delete mergedLive[k];
           }
         }
 
         this._fromServer = true;
-        this.results = data.results || {};
+        this.results = mergedResults;
         this.schedule = data.schedule || {};
         this.live = mergedLive;
-        this.resultsRecordedAt = data.resultsRecordedAt || {};
+        this.resultsRecordedAt = mergedRecorded;
         this._dataETag = newETag;
         // Clear flag after watchers fire (microtask)
         Promise.resolve().then(() => { this._fromServer = false; });
@@ -1220,18 +1252,28 @@ document.addEventListener('alpine:init', () => {
       if (!this.liveMatch) return;
       const key = this.liveMatch.key;
       // Mark this key as recently locally-written so a racing poll's pre-POST
-      // server snapshot can't overwrite our optimistic update with empty state.
+      // server snapshot can't overwrite our optimistic update.
       this._recentLocalLive = this._recentLocalLive || {};
       this._recentLocalLive[key] = Date.now();
-      // optimistic local update + immediate localStorage save
-      // (so a refresh before POST completes still recovers the state)
+
+      // If everything has been undone back to zero, drop the live entry —
+      // the match returns to "scheduled" until a real point is recorded again.
+      const draftEmpty = this.liveDraft.sets.length === 0 &&
+                        this.liveDraft.cur[0] === 0 &&
+                        this.liveDraft.cur[1] === 0 &&
+                        !this.liveDraft.tb;
+
       const newLive = { ...this.live };
-      newLive[key] = {
-        sets: this.liveDraft.sets.map(s => [s[0], s[1]]),
-        cur:  [this.liveDraft.cur[0], this.liveDraft.cur[1]],
-        tb:   this.liveDraft.tb ? [this.liveDraft.tb[0], this.liveDraft.tb[1]] : null,
-        updatedAt: new Date().toISOString()
-      };
+      if (draftEmpty) {
+        delete newLive[key];
+      } else {
+        newLive[key] = {
+          sets: this.liveDraft.sets.map(s => [s[0], s[1]]),
+          cur:  [this.liveDraft.cur[0], this.liveDraft.cur[1]],
+          tb:   this.liveDraft.tb ? [this.liveDraft.tb[0], this.liveDraft.tb[1]] : null,
+          updatedAt: new Date().toISOString()
+        };
+      }
       this.live = newLive;
       this.persistLocal();
 
@@ -1254,6 +1296,11 @@ document.addEventListener('alpine:init', () => {
           return;
         }
         this.livePending = false;
+        if (data.cleared) {
+          // Server confirmed the live entry was removed (state went back to
+          // 0:0). Local state is already cleared via optimistic update.
+          this.showToast('↩ Live изчистен — мачът пак е предстоящ');
+        }
         if (data.finalized) {
           // Server promoted live → results
           this._fromServer = true;

@@ -379,13 +379,23 @@ const server = http.createServer(async (req, res) => {
         if (a > b) setsA++;
         else if (b > a) setsB++;
       }
+      // If state is fully empty (everything undone back to zero), don't keep
+      // a live entry — the match returns to "scheduled" until it actually
+      // starts again with a real point.
+      const isEmpty = v.sets.length === 0 && v.cur[0] === 0 && v.cur[1] === 0 && !v.tb;
       let finalized = false;
+      let cleared = false;
       if (setsA >= 2 || setsB >= 2) {
         data.results[key] = [setsA, setsB];
         data.resultsRecordedAt[key] = new Date().toISOString();
         delete data.live[key];
         if (data.schedule[key]) delete data.schedule[key];
         finalized = true;
+      } else if (isEmpty) {
+        if (data.live[key]) {
+          delete data.live[key];
+          cleared = true;
+        }
       } else {
         data.live[key] = { ...v, updatedAt: new Date().toISOString() };
       }
@@ -393,6 +403,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         ok: true,
         finalized,
+        cleared,
         live: data.live[key] || null,
         result: finalized ? data.results[key] : null
       });
