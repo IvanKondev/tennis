@@ -29,6 +29,7 @@ const MIME = {
   '.css':  'text/css; charset=utf-8',
   '.js':   'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg':  'image/svg+xml',
   '.png':  'image/png',
   '.jpg':  'image/jpeg',
@@ -37,7 +38,7 @@ const MIME = {
   '.woff2':'font/woff2'
 };
 
-const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.svg', '.json']);
+const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.svg', '.json', '.webmanifest']);
 
 // ===== File cache (loaded into memory at startup) =====
 const fileCache = new Map();
@@ -50,6 +51,11 @@ function loadIntoCache(filePath) {
     const entry = { content, etag, ext };
     if (COMPRESSIBLE.has(ext) && content.length > 1024) {
       entry.gzipped = zlib.gzipSync(content, { level: 9 });
+      // Brotli for clients that accept it. Quality 11 (max) is fine here —
+      // we compress once at startup, never per-request.
+      entry.brotli = zlib.brotliCompressSync(content, {
+        params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 }
+      });
     }
     fileCache.set(filePath, entry);
     return entry;
@@ -169,6 +175,11 @@ function acceptsGzip(req) {
   return /\bgzip\b/.test(ae);
 }
 
+function acceptsBrotli(req) {
+  const ae = req.headers['accept-encoding'] || '';
+  return /\bbr\b/.test(ae);
+}
+
 function serveStatic(req, res, urlPath) {
   const filePath = path.join(PUBLIC_DIR, urlPath === '/' ? 'index.html' : urlPath);
   if (!filePath.startsWith(PUBLIC_DIR)) {
@@ -186,15 +197,27 @@ function serveStatic(req, res, urlPath) {
   }
 
   const isHtml = cached.ext === '.html';
+  // sw.js must not be aggressively cached — browsers need to detect updates.
+  // Manifest is also small and changes when shell changes; play it safe.
+  const isShortCache = isHtml ||
+    filePath.endsWith('sw.js') ||
+    filePath.endsWith('manifest.webmanifest');
   const headers = {
     'Content-Type': MIME[cached.ext] || 'application/octet-stream',
     'ETag': cached.etag,
-    'Cache-Control': isHtml
+    'Cache-Control': isShortCache
       ? 'public, max-age=0, must-revalidate'
       : 'public, max-age=604800, immutable'
   };
 
-  // Gzip if available + accepted
+  // Prefer Brotli over Gzip if both supported.
+  if (cached.brotli && acceptsBrotli(req)) {
+    headers['Content-Encoding'] = 'br';
+    headers['Vary'] = 'Accept-Encoding';
+    headers['Content-Length'] = cached.brotli.length;
+    res.writeHead(200, headers);
+    return res.end(cached.brotli);
+  }
   if (cached.gzipped && acceptsGzip(req)) {
     headers['Content-Encoding'] = 'gzip';
     headers['Vary'] = 'Accept-Encoding';
@@ -233,12 +256,30 @@ const server = http.createServer(async (req, res) => {
       if (typeof incoming !== 'object' || !incoming.results || !incoming.schedule) {
         return json(res, 400, { error: 'invalid payload' });
       }
+      // Reject unknown keys — only canonical pairs from MATCHES_SEED are allowed.
+      // Defense in depth: even an authenticated client shouldn't be able to write
+      // junk pairs (typo, swapped order, removed player) into persistent state.
+      for (const k in incoming.results) {
+        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid result key: ' + k });
+      }
+      for (const k in incoming.schedule) {
+        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid schedule key: ' + k });
+      }
+      const liveIn = incoming.live || {};
+      for (const k in liveIn) {
+        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid live key: ' + k });
+      }
       writeData({
         results: incoming.results,
         schedule: incoming.schedule,
-        live: incoming.live || {}
+        live: liveIn
       });
       return json(res, 200, { ok: true });
+    }
+    if (url === '/api/data') {
+      // Known path, unsupported method
+      res.writeHead(405, { 'Allow': 'GET, PUT' });
+      return res.end();
     }
 
     // ===== LIVE SCORING =====
@@ -352,6 +393,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url === '/api/health') {
       return json(res, 200, { ok: true, hasAdmin: !!ADMIN_PASSWORD });
+    }
+
+    // Unknown /api/* path — return 404 JSON instead of falling through to static
+    if (url.startsWith('/api/')) {
+      return json(res, 404, { error: 'not found' });
     }
 
     // ===== STATIC =====

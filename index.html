@@ -2,7 +2,7 @@
 <html lang="bg">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#0e1c14" />
 <title>Тенис Лига Велинград · Сезон 2026</title>
 <meta name="description" content="Любителска тенис лига Велинград — всеки срещу всеки, до 2 спечелени сета. Live резултати в реално време." />
@@ -30,6 +30,12 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Тенис Велинград" />
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
@@ -37,6 +43,13 @@
 <script src="data.js"></script>
 <script src="app.js"></script>
 <script defer src="alpine.min.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  }
+</script>
 </head>
 <body x-data="tennisApp" x-cloak>
   <!-- Toast (auto-refresh notifications) -->

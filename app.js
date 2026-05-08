@@ -130,8 +130,12 @@ document.addEventListener('alpine:init', () => {
       }
 
       const playedMatches = matches.filter(m => m.played);
+      // Hide past-dated unplayed matches from "upcoming" — they linger because admin
+      // forgot to enter result. They still exist in `matches` so admin can find &
+      // record them; we just don't pretend they're upcoming.
+      const todayStr = this.todayISO();
       const scheduledMatches = matches
-        .filter(m => !m.played && m.scheduledAt)
+        .filter(m => !m.played && m.scheduledAt && m.scheduledAt.slice(0, 10) >= todayStr)
         .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
 
       // Standings
@@ -311,18 +315,10 @@ document.addEventListener('alpine:init', () => {
         const newETag = r.headers.get('etag');
         const data = await r.json();
 
-        // Compute diff to detect actual changes (vs ETag false positive)
-        const newR = JSON.stringify(data.results || {});
-        const newS = JSON.stringify(data.schedule || {});
-        const newL = JSON.stringify(data.live || {});
-        const curR = JSON.stringify(this.results || {});
-        const curS = JSON.stringify(this.schedule || {});
-        const curL = JSON.stringify(this.live || {});
-
-        if (newR === curR && newS === curS && newL === curL) {
-          this._dataETag = newETag;
-          return;
-        }
+        // Server uses content-hash ETag, so a 200 here means content actually
+        // changed. No need to diff every field — just snapshot live for the
+        // toast distinction below.
+        const oldLiveStr = JSON.stringify(this.live || {});
 
         this._fromServer = true;
         this.results = data.results || {};
@@ -332,11 +328,10 @@ document.addEventListener('alpine:init', () => {
         // Clear flag after watchers fire (microtask)
         Promise.resolve().then(() => { this._fromServer = false; });
 
-        if (newL !== curL) {
-          this.showToast('🔴 Live резултат обновен');
-        } else {
-          this.showToast('✨ Данните са обновени');
-        }
+        const newLiveStr = JSON.stringify(this.live || {});
+        this.showToast(newLiveStr !== oldLiveStr
+          ? '🔴 Live резултат обновен'
+          : '✨ Данните са обновени');
       } catch (e) {
         // Silent fail — try again next tick
       }
@@ -1171,10 +1166,12 @@ document.addEventListener('alpine:init', () => {
       } catch (e) { return; }
       const localLive = local && local.live;
       if (!localLive) return;
-      // Only recover entries written in the last 30 seconds — anything older
-      // would have been persisted to server already; if the server doesn't
-      // have it now, it was deliberately deleted (admin clear / finalize).
-      const RECOVERY_WINDOW_MS = 30 * 1000;
+      // Recover entries written in the last 10 minutes. A real match between
+      // games can have multi-minute pauses; a 30s window was losing legit
+      // unsent updates on flaky 4G. Server-side dedupe protects against stale
+      // resends — if server already has fresher state (or deleted it), the
+      // POST is a no-op or 409.
+      const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
       const now = Date.now();
       const merged = { ...this.live };
       const toResend = [];

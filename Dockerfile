@@ -7,8 +7,8 @@ COPY server.js data.js ./
 
 # Static frontend lives in public/
 RUN mkdir -p public
-COPY index.html styles.css app.js data.js alpine.min.js ./public/
-COPY og.png og.svg favicon.svg apple-touch-icon.png ./public/
+COPY index.html styles.css app.js data.js alpine.min.js sw.js ./public/
+COPY manifest.webmanifest og.png favicon.svg apple-touch-icon.png ./public/
 
 # Persistent volume for results / schedule
 RUN mkdir -p /data

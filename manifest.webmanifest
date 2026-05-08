@@ -1,0 +1,26 @@
+{
+  "name": "Тенис Лига Велинград",
+  "short_name": "Тенис Велинград",
+  "description": "Любителска тенис лига Велинград — резултати, класиране и live мачове в реално време.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1c14",
+  "theme_color": "#0e1c14",
+  "lang": "bg",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
