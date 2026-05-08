@@ -46,7 +46,23 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js').then(reg => {
+        // Detect when a new version is downloaded and ready in the background.
+        // The page is still running old code; we surface a "tap to reload" banner.
+        if (!reg) return;
+        const watchInstalling = (sw) => {
+          if (!sw) return;
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+              window.dispatchEvent(new CustomEvent('sw-update-available'));
+            }
+          });
+        };
+        watchInstalling(reg.installing);
+        reg.addEventListener('updatefound', () => watchInstalling(reg.installing));
+        // Force a check now (in case the cached SW didn't already check on load)
+        reg.update().catch(() => {});
+      }).catch(() => {});
     });
   }
 </script>
@@ -54,6 +70,11 @@
 <body x-data="tennisApp" x-cloak>
   <!-- Toast (auto-refresh notifications) -->
   <div class="toast" x-show="toast" x-transition.opacity x-text="toast"></div>
+
+  <!-- SW update available — persistent until user taps to reload -->
+  <div class="sw-update-banner" x-show="swUpdateReady" @click="window.location.reload()" x-transition>
+    ✨ Налична е нова версия — тапни за обнова
+  </div>
 
   <!-- HERO (compact, only on standings) -->
   <header class="hero" x-show="view === 'standings'">
@@ -124,6 +145,38 @@
               <div class="live-card-cta">
                 <span class="live-dot"></span>
                 <span>Тапни за да въведеш геймове</span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Should-be-live: scheduled today, time has passed, not started yet -->
+      <template x-if="matchesShouldBeLive.length > 0">
+        <div class="live-banner-big start-now-banner">
+          <div class="live-banner-head start-now-head">
+            <span class="start-now-icon">⏰</span>
+            <span>Време е за тези мачове</span>
+          </div>
+          <template x-for="m in matchesShouldBeLive" :key="m.key">
+            <div class="live-card start-now-card" @click="openLive(m)">
+              <div class="live-card-vs">
+                <div class="live-card-player">
+                  <span class="avatar xl" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                  <span class="live-card-name" x-text="m.p1"></span>
+                </div>
+                <div class="live-card-score-block">
+                  <div class="start-now-time" x-text="m.scheduledAt.slice(11,16)"></div>
+                  <div class="start-now-rel" x-text="timeFromNow(m.scheduledAt)"></div>
+                </div>
+                <div class="live-card-player">
+                  <span class="avatar xl" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                  <span class="live-card-name" x-text="m.p2"></span>
+                </div>
+              </div>
+              <div class="live-card-cta start-now-cta">
+                <span>⚡</span>
+                <span>Тапни за да започнеш на живо</span>
               </div>
             </div>
           </template>

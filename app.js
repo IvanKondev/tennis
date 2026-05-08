@@ -61,6 +61,14 @@ document.addEventListener('alpine:init', () => {
     _pollInterval: null,
     _fromServer: false,
 
+    // Reactive "now" timestamp; bumped every 30s so time-based getters
+    // (matchesShouldBeLive, etc.) reactively update without a full reload.
+    _now: Date.now(),
+
+    // Set to true when service worker has installed a new version in the
+    // background. Shown as a tap-to-reload banner.
+    swUpdateReady: false,
+
     // ===== Derived state (recomputed only when results/schedule change) =====
     matches: [],
     matchByPair: {},
@@ -99,6 +107,15 @@ document.addEventListener('alpine:init', () => {
 
       // Start polling for server-side changes
       this.startAutoRefresh();
+
+      // Reactive "now" tick — bumps every 30s so getters that depend on
+      // current time (matchesShouldBeLive, timeFromNow) re-evaluate.
+      setInterval(() => { this._now = Date.now(); }, 30000);
+
+      // Listen for service worker update readiness (dispatched from index.html).
+      window.addEventListener('sw-update-available', () => {
+        this.swUpdateReady = true;
+      });
     },
 
     recomputeDerived() {
@@ -1250,15 +1267,42 @@ document.addEventListener('alpine:init', () => {
       } catch (e) {}
     },
 
-    // Today's matches that are not yet played AND not currently live
-    // (live ones get the big banner; we don't want to show them twice)
+    // Today's UPCOMING matches: scheduled time still in the future. Past-time
+    // matches go into matchesShouldBeLive (own banner with prominent CTA).
     get todaysMatches() {
       const t = this.todayISO();
-      return this.matches.filter(m =>
-        !m.played &&
-        !this.live[m.key] &&
-        m.scheduledAt && m.scheduledAt.slice(0, 10) === t
-      );
+      const now = this._now;
+      return this.matches.filter(m => {
+        if (m.played || this.live[m.key]) return false;
+        if (!m.scheduledAt || m.scheduledAt.slice(0, 10) !== t) return false;
+        return new Date(m.scheduledAt).getTime() > now;
+      });
+    },
+
+    // Matches whose scheduled time is past but no live data was entered yet.
+    // Promoted to a big "time to start" banner so it's visually obvious that
+    // the match should be happening right now.
+    get matchesShouldBeLive() {
+      const t = this.todayISO();
+      const now = this._now;
+      return this.matches.filter(m => {
+        if (m.played || this.live[m.key]) return false;
+        if (!m.scheduledAt || m.scheduledAt.slice(0, 10) !== t) return false;
+        return new Date(m.scheduledAt).getTime() <= now;
+      });
+    },
+
+    // Human-readable relative time in minutes/hours, for "10:30 — преди 30мин".
+    timeFromNow(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const diffMin = Math.round((this._now - d.getTime()) / 60000);
+      if (diffMin <= -60) return 'след ' + Math.round(-diffMin / 60) + 'ч';
+      if (diffMin < 0) return 'след ' + (-diffMin) + 'мин';
+      if (diffMin < 1) return 'сега';
+      if (diffMin < 60) return 'преди ' + diffMin + 'мин';
+      return 'преди ' + Math.round(diffMin / 60) + 'ч';
     },
 
     get liveMatchesList() {

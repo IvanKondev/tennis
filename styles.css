@@ -1001,6 +1001,26 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 .status-saved { color: var(--win); }
 .status-error { color: var(--loss); }
 
+/* SW update available — persistent click-to-reload banner at top */
+.sw-update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 250;
+  background: linear-gradient(90deg, #d4af37 0%, #e8c969 100%);
+  color: #1a1208;
+  padding: 12px 16px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  user-select: none;
+}
+.sw-update-banner:active { filter: brightness(0.95); }
+
 /* Auto-refresh toast */
 .toast {
   position: fixed;
@@ -1866,6 +1886,48 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   .live-card { padding: 20px; }
   .live-card-num { font-size: 96px; }
   .live-card-colon { font-size: 76px; }
+}
+
+/* --- Start-now banner — same shape as live-banner-big but gold/amber accent --- */
+.start-now-banner { margin-bottom: 16px; }
+.start-now-head {
+  color: #fbbf24;
+}
+.start-now-icon { font-size: 16px; filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.5)); }
+
+.start-now-card {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.06), var(--bg-1));
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.15), 0 8px 32px rgba(0,0,0,0.4);
+}
+.start-now-card:hover {
+  border-color: rgba(251, 191, 36, 0.55);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.3), 0 12px 40px rgba(251, 191, 36, 0.18);
+}
+
+.start-now-time {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 56px;
+  line-height: 1;
+  color: #fbbf24;
+  text-shadow: 0 0 16px rgba(251, 191, 36, 0.4);
+  letter-spacing: 1px;
+}
+.start-now-rel {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 0.4px;
+}
+@media (min-width: 640px) {
+  .start-now-time { font-size: 84px; }
+}
+
+.start-now-cta {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.32);
+  color: #fde68a;
 }
 
 /* --- Today banner — compact, dark theme --- */

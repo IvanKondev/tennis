@@ -6,7 +6,7 @@
 //   other static     → stale-while-revalidate
 //
 // Bump CACHE_VERSION whenever shell assets change to force a refresh.
-const CACHE_VERSION = 'tennis-v4';
+const CACHE_VERSION = 'tennis-v6';
 const SHELL = [
   '/',
   '/index.html',
@@ -62,9 +62,12 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Static assets: stale-while-revalidate.
+  // ignoreSearch: server appends ?v=<hash> to asset URLs in HTML for HTTP
+  // cache busting. We want SW cache to hit regardless of query string,
+  // since the server returns the same bytes for every version of the URL.
   event.respondWith(
     caches.open(CACHE_VERSION).then(async (cache) => {
-      const cached = await cache.match(req);
+      const cached = await cache.match(req, { ignoreSearch: true });
       const network = fetch(req).then(r => {
         if (r && r.status === 200) cache.put(req, r.clone());
         return r;

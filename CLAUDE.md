@@ -10,6 +10,10 @@ This file is auto-loaded into every Claude Code session in this repo. The README
 
 The service worker precaches a fixed list of files (the "shell"). When any of those files change, clients with the old cache will keep serving the old version until the SW updates. The SW only updates when its own bytes change — which we trigger by bumping the version constant.
 
+**Note on HTTP cache busting:** The server automatically inserts `?v=<hash>` into asset URLs in HTML at startup (see `transformHtml` in server.js). This means non-PWA browsers also pick up new files automatically — they revalidate HTML (`must-revalidate, max-age=0`), get new HTML with new versioned URLs, and fetch fresh assets. So users without SW (and users still using old immutable-cached assets from prior deploys) get updates without hard refresh.
+
+The CACHE_VERSION bump is for SW users — it forces SW reinstall and shell re-precache.
+
 **Shell files** (precached in `sw.js` → `SHELL` array):
 - `/index.html`
 - `/styles.css`

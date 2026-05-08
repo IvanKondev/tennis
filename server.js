@@ -43,9 +43,9 @@ const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.svg', '.json', '.webmani
 // ===== File cache (loaded into memory at startup) =====
 const fileCache = new Map();
 
-function loadIntoCache(filePath) {
+function loadIntoCache(filePath, contentOverride) {
   try {
-    const content = fs.readFileSync(filePath);
+    const content = contentOverride || fs.readFileSync(filePath);
     const etag = '"' + crypto.createHash('md5').update(content).digest('hex').slice(0, 16) + '"';
     const ext = path.extname(filePath).toLowerCase();
     const entry = { content, etag, ext };
@@ -62,17 +62,60 @@ function loadIntoCache(filePath) {
   } catch (e) { return null; }
 }
 
+// Inject ?v=<hash> into asset URLs inside HTML so browsers automatically
+// fetch fresh versions when shell files change. Critical for users without
+// the ability to hard-refresh (iOS Safari, non-technical visitors). Old
+// HTTP-cached assets become unreferenced; the browser fetches the new
+// versioned URL on its own.
+function transformHtml(buf) {
+  let html = buf.toString('utf-8');
+  // Iterate every cached file and rewrite quoted refs in HTML.
+  for (const [fp, ent] of fileCache) {
+    const fname = path.basename(fp);
+    // sw.js MUST keep its original URL — service worker registration is by URL,
+    // and the browser's SW update flow handles its own cache busting.
+    if (fname === 'sw.js') continue;
+    if (fname === 'index.html') continue;
+    const v = ent.etag.replace(/"/g, '').slice(0, 8);
+    // Only replace inside double-quoted attribute values to avoid touching
+    // text content or comments. e.g. href="styles.css" → href="styles.css?v=abcd".
+    const needle = '"' + fname + '"';
+    const replacement = '"' + fname + '?v=' + v + '"';
+    html = html.split(needle).join(replacement);
+  }
+  return Buffer.from(html, 'utf-8');
+}
+
 function preloadPublicDir() {
+  if (!fs.existsSync(PUBLIC_DIR)) {
+    console.log(`[cache] Preloaded 0 static files`);
+    return;
+  }
+  // Collect all files first; load HTML last so its references know the
+  // versions of every other asset.
+  const all = [];
   const walk = (dir) => {
     for (const name of fs.readdirSync(dir)) {
       const full = path.join(dir, name);
       const stat = fs.statSync(full);
       if (stat.isDirectory()) walk(full);
-      else loadIntoCache(full);
+      else all.push(full);
     }
   };
-  if (fs.existsSync(PUBLIC_DIR)) walk(PUBLIC_DIR);
-  console.log(`[cache] Preloaded ${fileCache.size} static files`);
+  walk(PUBLIC_DIR);
+  // Phase 1: every non-HTML file
+  for (const f of all) {
+    if (path.extname(f).toLowerCase() !== '.html') loadIntoCache(f);
+  }
+  // Phase 2: HTML, with asset URL versioning baked in
+  for (const f of all) {
+    if (path.extname(f).toLowerCase() === '.html') {
+      const raw = fs.readFileSync(f);
+      const transformed = transformHtml(raw);
+      loadIntoCache(f, transformed);
+    }
+  }
+  console.log(`[cache] Preloaded ${fileCache.size} static files (HTML asset URLs versioned)`);
 }
 
 preloadPublicDir();
