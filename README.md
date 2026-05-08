@@ -700,7 +700,7 @@ Headers: `ETag: "<value>"`, `Cache-Control: no-cache`
 - **PWA** — manifest + service worker → "Add to home screen", offline mode, instant subsequent loads
 - **Set-by-set резултати** — вместо само `[2, 0]`, пази `[[6,4], [6,2]]` за всеки сет
 - **Recent activity feed** — секция "Последни 5 мача" с timestamps. Изисква да добавим `recordedAt` към result entries.
-- **Player profile bottom sheet** — тапаш играч → отваря sheet с full stats, без да губиш context
+- **Player profile bottom sheet** — кликаш играч → отваря sheet с full stats, без да губиш context
 - **`.ics` export** — "Добави в Google Calendar" бутон в Предстоящи
 - **Web Push notifications** — "Утре имаш мач срещу X в 18:00"
 - **Стрийкове** — "Иво е на 3 поредни победи!"

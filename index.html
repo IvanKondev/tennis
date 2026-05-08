@@ -73,7 +73,7 @@
 
   <!-- SW update available — persistent until user taps to reload -->
   <div class="sw-update-banner" x-show="swUpdateReady" @click="window.location.reload()" x-transition>
-    ✨ Налична е нова версия — тапни за обнова
+    ✨ Налична е нова версия — кликни за обнова
   </div>
 
   <!-- HERO (compact, only on standings) -->
@@ -144,7 +144,7 @@
               </div>
               <div class="live-card-cta">
                 <span class="live-dot"></span>
-                <span>Тапни за да въведеш геймове</span>
+                <span>Кликни за да въведеш геймове</span>
               </div>
             </div>
           </template>
@@ -176,7 +176,7 @@
               </div>
               <div class="live-card-cta start-now-cta">
                 <span>⚡</span>
-                <span>Тапни за да започнеш на живо</span>
+                <span>Кликни за да започнеш на живо</span>
               </div>
             </div>
           </template>
@@ -245,7 +245,7 @@
 
       <div class="panel-head">
         <h2>Класиране</h2>
-        <p>Точки → победи → разлика в сетове · <em>тапни играч за подробности</em></p>
+        <p>Точки → победи → разлика в сетове · <em>кликни играч за подробности</em></p>
       </div>
       <div class="standings-wrap">
         <table class="standings">
@@ -526,7 +526,7 @@
         <span><span class="lg-mark lg-win"></span>Победа</span>
         <span><span class="lg-mark lg-loss"></span>Загуба</span>
         <span><span class="lg-mark lg-pending"></span>Предстоящ</span>
-        <span class="legend-hint">Тапни име за подробности</span>
+        <span class="legend-hint">Кликни име за подробности</span>
       </div>
     </section>
     </template>
@@ -1055,7 +1055,7 @@
                 </span>
               </template>
               <template x-if="!liveCanEndSet() && liveDraft.cur[0] === 0 && liveDraft.cur[1] === 0">
-                <span class="live-end-hint">Тапни играч за +1 гейм</span>
+                <span class="live-end-hint">Кликни играч за +1 гейм</span>
               </template>
               <template x-if="!liveCanEndSet() && liveDraft.cur[0] === liveDraft.cur[1] && liveDraft.cur[0] > 0">
                 <span class="live-end-hint">Равенство — играйте още</span>
@@ -1116,7 +1116,7 @@
               <span class="today-pick-icon">🔴</span>
               <span class="today-pick-text">
                 <strong>На живо — по геймове</strong>
-                <small>Тапвай след всеки гейм; авто-финал при 2 сета</small>
+                <small>Кликвай след всеки гейм; авто-финал при 2 сета</small>
               </span>
             </button>
             <button class="today-pick-btn final" @click="todayPickFinal()">
