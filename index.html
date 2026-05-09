@@ -650,6 +650,9 @@
             <button type="submit" class="btn-primary full" x-text="needsPasswordSetup ? 'Задай парола' : 'Влез'"></button>
             <p class="error" x-show="passwordError" x-text="passwordError"></p>
           </form>
+          <button type="button" class="admin-locked-refresh" @click="hardRefresh()">
+            ↻ Презареди (изчисти кеша)
+          </button>
         </div>
       </template>
 
