@@ -218,20 +218,27 @@
       <template x-if="recentResults.length > 0">
         <div class="recent-results">
           <div class="recent-results-head">🏆 Последни резултати</div>
-          <template x-for="r in recentResults" :key="r.key">
-            <div class="recent-result-row" @click="jumpToPlayer(r.match.winner)">
-              <div class="rr-side" :class="{winner: r.match.winner === r.match.p1}">
-                <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p1)}`" x-text="initials(r.match.p1)"></span>
-                <span class="rr-name" x-text="r.match.p1"></span>
-              </div>
-              <div class="rr-score">
-                <span :class="{won: r.match.s1 > r.match.s2}" x-text="r.match.s1"></span><span class="rr-colon">:</span><span :class="{won: r.match.s2 > r.match.s1}" x-text="r.match.s2"></span>
-              </div>
-              <div class="rr-side right" :class="{winner: r.match.winner === r.match.p2}">
-                <span class="rr-name" x-text="r.match.p2"></span>
-                <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p2)}`" x-text="initials(r.match.p2)"></span>
-              </div>
-              <div class="rr-time" x-text="r.recordedAt ? timeFromNow(r.recordedAt) : ''"></div>
+          <template x-for="g in recentResultsByDate" :key="g.label || '_flat'">
+            <div class="rr-group">
+              <template x-if="g.label">
+                <div class="rr-date-sep" x-text="g.label"></div>
+              </template>
+              <template x-for="r in g.items" :key="r.key">
+                <div class="recent-result-row" @click="jumpToPlayer(r.match.winner)">
+                  <div class="rr-side" :class="{winner: r.match.winner === r.match.p1}">
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p1)}`" x-text="initials(r.match.p1)"></span>
+                    <span class="rr-name" x-text="r.match.p1"></span>
+                  </div>
+                  <div class="rr-score">
+                    <span :class="{won: r.match.s1 > r.match.s2}" x-text="r.match.s1"></span><span class="rr-colon">:</span><span :class="{won: r.match.s2 > r.match.s1}" x-text="r.match.s2"></span>
+                  </div>
+                  <div class="rr-side right" :class="{winner: r.match.winner === r.match.p2}">
+                    <span class="rr-name" x-text="r.match.p2"></span>
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p2)}`" x-text="initials(r.match.p2)"></span>
+                  </div>
+                  <div class="rr-time" x-text="r.recordedAt ? timeFromNow(r.recordedAt) : ''"></div>
+                </div>
+              </template>
             </div>
           </template>
         </div>

@@ -1511,25 +1511,47 @@ document.addEventListener('alpine:init', () => {
       return groups;
     },
 
-    // Last 5 played matches. Sort priority:
-    //   1. Matches with recordedAt timestamp — newest first
-    //   2. Legacy matches (no timestamp) — by SEED index, latest first
-    // Always returns up to 5 entries when ANY matches have been played; that
-    // way the "recent results" panel is a stable fixture on the home page.
+    // Last 5 played matches that were recorded via the app (have recordedAt).
+    // Legacy seed entries without a timestamp are intentionally excluded —
+    // they're bulk-imported historic data, not "recent activity".
     get recentResults() {
       const recAt = this.resultsRecordedAt || {};
       const out = [];
       for (const m of this.matches) {
         if (!m.played) continue;
-        out.push({ key: m.key, match: m, recordedAt: recAt[m.key] || null });
+        const ts = recAt[m.key];
+        if (!ts) continue;
+        out.push({ key: m.key, match: m, recordedAt: ts });
       }
-      out.sort((a, b) => {
-        if (a.recordedAt && b.recordedAt) return b.recordedAt.localeCompare(a.recordedAt);
-        if (a.recordedAt) return -1;   // timestamped first
-        if (b.recordedAt) return 1;
-        return b.match.num - a.match.num;  // legacy: higher SEED index first
-      });
+      out.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
       return out.slice(0, 5);
+    },
+
+    // Group recentResults by recorded-day with labels: Днес / Вчера / "5 май".
+    get recentResultsByDate() {
+      const recent = this.recentResults;
+      if (recent.length === 0) return [];
+
+      const todayStr = this.todayISO();
+      const y = new Date(todayStr + 'T00:00:00');
+      y.setDate(y.getDate() - 1);
+      const yesterdayStr = this.toISODate(y);
+
+      const groups = [];
+      let cur = null;
+      for (const r of recent) {
+        const d = r.recordedAt.slice(0, 10);
+        let label;
+        if (d === todayStr) label = 'Днес';
+        else if (d === yesterdayStr) label = 'Вчера';
+        else label = new Date(r.recordedAt).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
+        if (!cur || cur.label !== label) {
+          cur = { label, items: [] };
+          groups.push(cur);
+        }
+        cur.items.push(r);
+      }
+      return groups;
     },
 
     get liveMatchesList() {

@@ -1973,6 +1973,18 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   transition: background 0.15s;
 }
 .recent-result-row + .recent-result-row { border-top: 1px solid var(--line); }
+
+.rr-date-sep {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-dim);
+  padding: 8px 4px 4px;
+  margin-top: 4px;
+  border-top: 1px dashed var(--line);
+}
+.rr-group:first-child .rr-date-sep { border-top: none; margin-top: 0; padding-top: 2px; }
 .recent-result-row:hover { background: var(--bg-2); }
 
 .rr-side {
