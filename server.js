@@ -172,7 +172,31 @@ function preloadPublicDir() {
       loadIntoCache(f, transformed);
     }
   }
-  console.log(`[cache] Preloaded ${fileCache.size} static files (HTML asset URLs versioned)`);
+  // Phase 3: substitute CACHE_VERSION placeholder in sw.js with a hash
+  // derived from every shell file's content. Any shell change → different
+  // hash → different sw.js bytes → browser installs new service worker
+  // automatically. No manual counter to forget.
+  const swPath = path.join(PUBLIC_DIR, 'sw.js');
+  if (fs.existsSync(swPath)) {
+    const shellNames = new Set([
+      'index.html', 'styles.css', 'app.js', 'data.js', 'alpine.min.js',
+      'manifest.webmanifest', 'favicon.svg', 'apple-touch-icon.png'
+    ]);
+    const h = crypto.createHash('md5');
+    for (const fp of [...fileCache.keys()].sort()) {
+      const fname = path.basename(fp);
+      if (shellNames.has(fname)) {
+        h.update(fname);
+        h.update(fileCache.get(fp).etag);
+      }
+    }
+    const cacheVersion = 'tennis-' + h.digest('hex').slice(0, 12);
+    const raw = fs.readFileSync(swPath, 'utf-8');
+    const transformed = Buffer.from(raw.replace('__CACHE_VERSION__', cacheVersion), 'utf-8');
+    loadIntoCache(swPath, transformed);
+    console.log(`[cache] sw.js CACHE_VERSION=${cacheVersion}`);
+  }
+  console.log(`[cache] Preloaded ${fileCache.size} static files (HTML asset URLs versioned, sw.js auto-versioned)`);
 }
 
 preloadPublicDir();

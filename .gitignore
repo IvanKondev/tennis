@@ -8,3 +8,12 @@ Thumbs.db
 *.tmp
 *.bak
 .claude/
+
+# Local dev artifacts (server reads from public/ — Dockerfile builds it from
+# the repo root in production, so the dev copy must NOT be committed).
+public/
+
+# Playwright MCP snapshots & test screenshots
+.playwright-mcp/
+admin-mobile-*.png
+*-mobile-*.png

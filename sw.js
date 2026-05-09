@@ -3,17 +3,20 @@
 // Strategy:
 //   /api/*           → network only (server's ETag does its own caching)
 //   navigations (HTML) → network-first, fall back to cached index
-//   other static     → stale-while-revalidate
+//   other static     → stale-while-revalidate, exact URL match
 //
-// Bump CACHE_VERSION whenever shell assets change to force a refresh.
-const CACHE_VERSION = 'tennis-v28';
+// CACHE_VERSION is substituted by the server at boot from a hash of all
+// shell files. Any change to a shell file → different sw.js bytes → browser
+// installs new SW automatically. No manual counter to forget.
+const CACHE_VERSION = '__CACHE_VERSION__';
+
+// Precache only files whose URLs are stable (no ?v=<hash> querystring).
+// Versioned files (app.js, styles.css, data.js, alpine.min.js) are fetched
+// on first request and cached under their versioned URL — a new deploy
+// produces a new URL, which is a guaranteed cache miss.
 const SHELL = [
   '/',
   '/index.html',
-  '/styles.css',
-  '/app.js',
-  '/data.js',
-  '/alpine.min.js',
   '/favicon.svg',
   '/apple-touch-icon.png',
   '/manifest.webmanifest'
@@ -61,13 +64,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: stale-while-revalidate.
-  // ignoreSearch: server appends ?v=<hash> to asset URLs in HTML for HTTP
-  // cache busting. We want SW cache to hit regardless of query string,
-  // since the server returns the same bytes for every version of the URL.
+  // Static assets: stale-while-revalidate with exact URL match.
+  // Versioned URLs (?v=<hash>) each get their own cache entry; on deploy
+  // the new hash → cache miss → guaranteed fresh fetch. Old versioned
+  // entries become orphaned and are purged when CACHE_VERSION changes
+  // (every deploy that touches a shell file).
   event.respondWith(
     caches.open(CACHE_VERSION).then(async (cache) => {
-      const cached = await cache.match(req, { ignoreSearch: true });
+      const cached = await cache.match(req);
       const network = fetch(req).then(r => {
         if (r && r.status === 200) cache.put(req, r.clone());
         return r;

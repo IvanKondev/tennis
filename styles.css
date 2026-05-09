@@ -86,6 +86,12 @@ body {
 
 input, button, textarea, select { font-family: inherit; color: inherit; }
 button { cursor: pointer; }
+/* Defense in depth against iOS Safari focus-zoom: any input below 16px
+   triggers an auto-zoom on tap. We also disable user-zoom in <meta viewport>,
+   but if that ever changes this keeps inputs zoom-safe. */
+input[type="text"], input[type="search"], input[type="password"],
+input[type="number"], input[type="tel"], input[type="email"],
+input[type="url"], input:not([type]), textarea, select { font-size: 16px; }
 em { font-style: normal; color: var(--text-dim); font-size: 0.9em; }
 
 /* ===== HERO ===== */
@@ -562,6 +568,11 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   padding-left: 4px; padding-right: 4px;
 }
 .chip-row.scrollable::-webkit-scrollbar { display: none; }
+/* On narrow screens, prefer wrapping over horizontal scrolling — the
+   horizontal-scroll affordance is poor on touch and chips get clipped. */
+@media (max-width: 480px) {
+  .admin-toolbar .chip-row.scrollable { flex-wrap: wrap; overflow-x: visible; }
+}
 
 .chip {
   background: var(--bg-1);
@@ -1020,9 +1031,10 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 .admin-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
 }
+.admin-head > div:first-child { min-width: 0; flex: 1 1 auto; }
 .admin-head h2 { font-family: 'Bebas Neue', sans-serif; font-size: 32px; line-height: 1; color: var(--text); }
 .admin-status {
   display: inline-flex;
@@ -1030,8 +1042,18 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   gap: 6px;
   font-size: 11px;
   color: var(--win);
-  margin-top: 4px;
+  margin-top: 6px;
   font-weight: 600;
+}
+.admin-version {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-faint);
+  letter-spacing: 0.3px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  word-break: break-all;
+  opacity: 0.7;
 }
 .dot {
   width: 8px; height: 8px;
@@ -2088,24 +2110,31 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 .add-player-row {
   display: flex;
   gap: 8px;
+  align-items: stretch;
 }
 .add-player-row input {
   flex: 1;
-  padding: 10px 12px;
+  min-width: 0;
+  padding: 11px 14px;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 10px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
   font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
+.add-player-row input::placeholder { color: var(--text-faint); }
 .add-player-row input:focus {
   outline: none;
   border-color: var(--accent);
+  background: var(--bg-1);
 }
 .add-player-row .btn-primary {
-  padding: 10px 18px;
+  padding: 11px 16px;
+  font-size: 14px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .add-player-error {
   color: #f87171;

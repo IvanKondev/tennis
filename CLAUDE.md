@@ -6,15 +6,13 @@ This file is auto-loaded into every Claude Code session in this repo. The README
 
 **Run through this before every `git commit`:**
 
-### 1. Did I touch any PWA shell file? → bump `CACHE_VERSION` in `sw.js`
+### 1. Cache version is auto-derived — no manual bump
 
-The service worker precaches a fixed list of files (the "shell"). When any of those files change, clients with the old cache will keep serving the old version until the SW updates. The SW only updates when its own bytes change — which we trigger by bumping the version constant.
+The server replaces `__CACHE_VERSION__` in `sw.js` at boot with a hash of every shell file's content (see `preloadPublicDir` phase 3 in `server.js`). Any change to a shell file → different hash → different `sw.js` bytes → browser installs a new SW automatically. **You do not need to bump anything manually.**
 
-**Note on HTTP cache busting:** The server automatically inserts `?v=<hash>` into asset URLs in HTML at startup (see `transformHtml` in server.js). This means non-PWA browsers also pick up new files automatically — they revalidate HTML (`must-revalidate, max-age=0`), get new HTML with new versioned URLs, and fetch fresh assets. So users without SW (and users still using old immutable-cached assets from prior deploys) get updates without hard refresh.
+**Non-PWA users** also get updates automatically: server inserts `?v=<hash>` into asset URLs in HTML at startup; browsers revalidate HTML (`must-revalidate, max-age=0`) and pick up the new versioned URLs.
 
-The CACHE_VERSION bump is for SW users — it forces SW reinstall and shell re-precache.
-
-**Shell files** (precached in `sw.js` → `SHELL` array):
+**Shell files** (auto-versioned via the hash):
 - `/index.html`
 - `/styles.css`
 - `/app.js`
@@ -24,26 +22,13 @@ The CACHE_VERSION bump is for SW users — it forces SW reinstall and shell re-p
 - `/apple-touch-icon.png`
 - `/manifest.webmanifest`
 
-If your commit modifies **any** of those, edit `sw.js` and bump the version:
+If you add a NEW file that should count as part of the shell, add its filename to the `shellNames` set in `preloadPublicDir` (server.js).
 
-```js
-const CACHE_VERSION = 'tennis-v1';  // → 'tennis-v2'
-```
+### 2. Did I add a new static asset that should be available offline at first paint?
 
-The version naming is just a counter — keep it monotonic so it's obvious which is newer.
+The SW precaches only stable-URL files: `/`, `/index.html`, `/favicon.svg`, `/apple-touch-icon.png`, `/manifest.webmanifest`. All other static assets are fetched lazily on first request and cached (stale-while-revalidate).
 
-**Files that DON'T require a bump:**
-- `server.js`, `Dockerfile`, `README.md`, `CLAUDE.md`, `seed.json` — never reach the browser as cached shell.
-- `og.png`, `og.svg` — used by social previews, not by the SPA shell.
-- `sw.js` itself — the bump IS the change; bumping itself counts as the change that ships.
-
-If you forget to bump and ship a CSS/JS change: existing PWA users will see the old UI until they hard-refresh or until the browser eventually re-checks the SW (next navigation, after a few hours).
-
-### 2. Did I add a new static asset that should be available offline?
-
-If you added a file the SPA loads on first paint (e.g. a new font file, new icon, new JS module), add it to the `SHELL` array in `sw.js` AND bump the version.
-
-If you added a file referenced lazily (e.g. an export-only icon used after a click), it'll still be cached the first time it's fetched via `stale-while-revalidate` — no shell update needed.
+If you add a NEW stable-URL file that must be in the offline shell, add it to the `SHELL` array in `sw.js` AND to the `shellNames` set in server.js (so the version hash reflects it).
 
 ### 3. Did I add new files that need to be served? → update `Dockerfile`
 
