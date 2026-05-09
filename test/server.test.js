@@ -24,6 +24,10 @@ const {
   validateLiveBody,
   migratePlayerRename,
   migratePlayerDelete,
+  safeStringEqual,
+  todayLocalISO,
+  authRateCheck,
+  authRateRecord,
   readData,
   writeData
 } = require('../server.js');
@@ -309,6 +313,99 @@ test('round-trip: migrate rename then writeData/readData preserves shape', () =>
   assert.deepEqual(back.results['Иво|Митёе'], [2, 1]);
   assert.deepEqual(back.results['Митёе|Жоро Б'], [0, 2]);
   assert.equal(back.results['Иво|Митко'], undefined);
+});
+
+// --------------------------------------------------------------------------
+// safeStringEqual: constant-time compare
+// --------------------------------------------------------------------------
+test('safeStringEqual: equal strings → true', () => {
+  assert.equal(safeStringEqual('abc', 'abc'), true);
+});
+
+test('safeStringEqual: different strings of same length → false', () => {
+  assert.equal(safeStringEqual('abc', 'abd'), false);
+});
+
+test('safeStringEqual: different lengths → false', () => {
+  assert.equal(safeStringEqual('abc', 'abcd'), false);
+});
+
+test('safeStringEqual: cyrillic input compares correctly', () => {
+  assert.equal(safeStringEqual('парола', 'парола'), true);
+  assert.equal(safeStringEqual('парола', 'паролб'), false);
+});
+
+test('safeStringEqual: non-string input → false (no throw)', () => {
+  assert.equal(safeStringEqual(undefined, 'x'), false);
+  assert.equal(safeStringEqual('x', null), false);
+  assert.equal(safeStringEqual(123, 123), false);
+});
+
+// --------------------------------------------------------------------------
+// todayLocalISO: Sofia timezone, format is YYYY-MM-DD
+// --------------------------------------------------------------------------
+test('todayLocalISO: returns YYYY-MM-DD format', () => {
+  const v = todayLocalISO();
+  assert.match(v, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('todayLocalISO: matches Sofia local date regardless of process TZ', () => {
+  // The implementation uses Intl.DateTimeFormat with timeZone: 'Europe/Sofia',
+  // so this is independent of process.env.TZ.
+  const expected = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Sofia',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+  assert.equal(todayLocalISO(), expected);
+});
+
+// --------------------------------------------------------------------------
+// auth rate limiter: lockout after N failures, reset on success, per-IP
+// --------------------------------------------------------------------------
+test('authRateLimiter: first attempt is allowed', () => {
+  const ip = 'rate-test-1.' + Math.random();
+  assert.equal(authRateCheck(ip).ok, true);
+});
+
+test('authRateLimiter: locks out after 5 failed attempts', () => {
+  const ip = 'rate-test-2.' + Math.random();
+  for (let i = 0; i < 5; i++) {
+    assert.equal(authRateCheck(ip).ok, true, `attempt ${i + 1} should be allowed before lockout`);
+    authRateRecord(ip, false);
+  }
+  const res = authRateCheck(ip);
+  assert.equal(res.ok, false, '6th attempt should be blocked');
+  assert.ok(res.retryAfterSec > 0 && res.retryAfterSec <= 60);
+});
+
+test('authRateLimiter: success resets counter', () => {
+  const ip = 'rate-test-3.' + Math.random();
+  for (let i = 0; i < 4; i++) authRateRecord(ip, false);
+  authRateRecord(ip, true);  // success — reset
+  // Five new failures should not trigger lockout (counter starts fresh).
+  for (let i = 0; i < 4; i++) authRateRecord(ip, false);
+  assert.equal(authRateCheck(ip).ok, true);
+});
+
+test('authRateLimiter: separate IPs are isolated', () => {
+  const ipA = 'rate-test-4a.' + Math.random();
+  const ipB = 'rate-test-4b.' + Math.random();
+  for (let i = 0; i < 5; i++) authRateRecord(ipA, false);
+  assert.equal(authRateCheck(ipA).ok, false);
+  assert.equal(authRateCheck(ipB).ok, true);  // B is unaffected
+});
+
+// --------------------------------------------------------------------------
+// writeData: backup link semantics — bak.1 is a complete prior file
+// --------------------------------------------------------------------------
+test('writeData: bak.1 holds the previous primary contents (not partial)', () => {
+  const dataFile = path.join(TMP_ROOT, 'tennis.json');
+  writeData({ players: ['linkA'], results: {}, schedule: {}, live: {}, resultsRecordedAt: {} });
+  writeData({ players: ['linkB'], results: {}, schedule: {}, live: {}, resultsRecordedAt: {} });
+  const bak1 = JSON.parse(fs.readFileSync(dataFile + '.bak.1', 'utf-8'));
+  // The previous primary's content must be fully readable — proves the
+  // link/copy step uses a complete file, not a half-written one.
+  assert.deepEqual(bak1.players, ['linkA']);
 });
 
 // --------------------------------------------------------------------------

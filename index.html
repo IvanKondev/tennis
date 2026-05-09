@@ -675,62 +675,212 @@
       </template>
 
       <template x-if="isAdmin">
-        <div class="admin-panel">
-          <div class="admin-head">
-            <div>
-              <h2>Админ</h2>
-              <p class="admin-status">
-                <span class="dot"></span>
-                <span x-show="backendMode === 'api'">Сървър · </span>
-                <span x-show="backendMode === 'local'">Локално · </span>
-                <span x-show="!saveStatus">Активен</span>
-                <span x-show="saveStatus === 'saving'" class="status-saving">Запис...</span>
-                <span x-show="saveStatus === 'saved'" class="status-saved">✓ Запазено</span>
-                <span x-show="saveStatus === 'error'" class="status-error">✕ Грешка</span>
-              </p>
-              <p class="admin-version" x-show="appVersion" x-text="appVersion"></p>
+        <div class="admin-panel-v2">
+          <!-- Compact head: just save status + overflow menu -->
+          <div class="admin-head-v2">
+            <div class="admin-status-mini" :class="{busy: saveStatus === 'saving', error: saveStatus === 'error'}">
+              <span class="dot"></span>
+              <span x-show="!saveStatus">Активен</span>
+              <span x-show="saveStatus === 'saving'">Запис…</span>
+              <span x-show="saveStatus === 'saved'">✓ Запазено</span>
+              <span x-show="saveStatus === 'error'">✕ Грешка</span>
             </div>
-            <div class="admin-tools">
-              <button class="btn-icon" @click="hardRefresh()" title="Презареди — изчиства SW кеша и взима последна версия">↻</button>
-              <button class="btn-icon" @click="exportData()" title="Експорт">⬇</button>
-              <label class="btn-icon" title="Импорт">
-                ⬆<input type="file" accept=".json,application/json" @change="importData($event)" hidden />
-              </label>
-              <button class="btn-icon" @click="logout()" title="Изход">✕</button>
-            </div>
+            <button class="btn-icon admin-menu-trigger" @click="adminMenuOpen = true" aria-label="Меню">⋯</button>
           </div>
 
-          <!-- Quick actions -->
-          <div class="quick-actions">
-            <button class="quick-btn primary" @click="openWizard('schedule')">
-              <span class="quick-icon">📅</span>
-              <span class="quick-text">
-                <strong>Планирай мач</strong>
-                <small>Играч → опонент → дата → час</small>
-              </span>
-              <span class="quick-arrow">→</span>
-            </button>
-            <button class="quick-btn" @click="openWizard('result')">
-              <span class="quick-icon">🎾</span>
-              <span class="quick-text">
-                <strong>Запиши резултат</strong>
-                <small>Играч → опонент → резултат</small>
-              </span>
-              <span class="quick-arrow">→</span>
-            </button>
-          </div>
+          <!-- TODAY hero -->
+          <template x-if="adminHasTodayContent">
+            <div class="admin-today">
+              <div class="today-label" x-text="adminTodayLabel"></div>
+              <!-- Live now -->
+              <template x-for="m in liveMatchesList" :key="'live-' + m.key">
+                <div class="today-card live-now">
+                  <div class="today-card-status"><span class="live-dot"></span> На живо <span x-text="formatLiveScore(m)"></span></div>
+                  <div class="today-card-vs">
+                    <span x-text="m.p1"></span>
+                    <span class="vs">vs</span>
+                    <span x-text="m.p2"></span>
+                  </div>
+                  <div class="today-card-actions">
+                    <button class="btn-primary today-cta" @click="openLive(m)">▶ Продължи на живо</button>
+                    <button class="btn-icon today-more" @click="openMatchActions(m)" aria-label="Още">⋯</button>
+                  </div>
+                </div>
+              </template>
+              <!-- Should be live (scheduled time passed, no live data) -->
+              <template x-for="m in matchesShouldBeLive" :key="'overdue-' + m.key">
+                <div class="today-card overdue">
+                  <div class="today-card-status">⏰ Време е · <span x-text="formatDate(m.scheduledAt)"></span></div>
+                  <div class="today-card-vs">
+                    <span x-text="m.p1"></span>
+                    <span class="vs">vs</span>
+                    <span x-text="m.p2"></span>
+                  </div>
+                  <div class="today-card-actions">
+                    <button class="btn-primary today-cta" @click="openLive(m)">▶ Започни</button>
+                    <button class="btn-icon today-more" @click="openMatchActions(m)" aria-label="Още">⋯</button>
+                  </div>
+                </div>
+              </template>
+              <!-- Today scheduled (future hours) -->
+              <template x-for="m in todaysMatches" :key="'today-' + m.key">
+                <div class="today-card upcoming">
+                  <div class="today-card-status">🕐 <span x-text="formatDate(m.scheduledAt)"></span></div>
+                  <div class="today-card-vs">
+                    <span x-text="m.p1"></span>
+                    <span class="vs">vs</span>
+                    <span x-text="m.p2"></span>
+                  </div>
+                  <div class="today-card-actions">
+                    <button class="btn-primary today-cta" @click="openLive(m)">▶ На живо</button>
+                    <button class="btn-icon today-more" @click="openMatchActions(m)" aria-label="Още">⋯</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
 
-          <!-- Players management: add / rename / delete -->
-          <div class="players-admin">
-            <div class="add-player-head">
-              <span class="add-player-icon">👤</span>
-              <strong>Играчи</strong>
-              <button type="button" class="players-toggle" @click="playersExpanded = !playersExpanded">
-                <span x-text="players.length"></span>
-                <span x-text="playersExpanded ? '▾' : '▸'"></span>
+          <!-- Empty state when no today content -->
+          <template x-if="!adminHasTodayContent">
+            <div class="admin-empty-today">
+              <div class="empty-today-icon">🎾</div>
+              <p class="empty-today-msg">Няма мач днес</p>
+              <button class="btn-primary" @click="openWizard('schedule')">+ Планирай мач</button>
+            </div>
+          </template>
+
+          <!-- Plan-new-match CTA (always visible when there IS a today match too,
+               so admin can quickly schedule another) -->
+          <template x-if="adminHasTodayContent">
+            <button class="admin-plan-cta" @click="openWizard('schedule')">
+              <span>+ Планирай нов мач</span>
+            </button>
+          </template>
+
+          <!-- Future matches section (collapsible) -->
+          <template x-if="adminFutureMatches.length > 0">
+            <div class="admin-section">
+              <button class="admin-section-head" @click="adminFutureExpanded = !adminFutureExpanded" :aria-expanded="adminFutureExpanded">
+                <span class="section-icon">📅</span>
+                <span class="section-title">Бъдещи мачове</span>
+                <span class="section-count" x-text="adminFutureMatches.length"></span>
+                <span class="section-chevron" x-text="adminFutureExpanded ? '▾' : '▸'"></span>
               </button>
+              <div class="admin-section-body" x-show="adminFutureExpanded" x-transition>
+                <template x-for="m in adminFutureMatches" :key="m.key">
+                  <div class="admin-match-v2 scheduled">
+                    <div class="admin-match-v2-info">
+                      <div class="match-time" x-text="formatDate(m.scheduledAt)"></div>
+                      <div class="match-vs">
+                        <span x-text="m.p1"></span>
+                        <span class="vs">vs</span>
+                        <span x-text="m.p2"></span>
+                      </div>
+                    </div>
+                    <button class="btn-primary match-primary" @click="primaryActionFor(m).handler()">
+                      <span x-text="primaryActionFor(m).icon"></span>
+                      <span x-text="primaryActionFor(m).label"></span>
+                    </button>
+                    <button class="btn-icon match-more" @click="openMatchActions(m)" aria-label="Още">⋯</button>
+                  </div>
+                </template>
+              </div>
             </div>
+          </template>
 
+          <!-- Played matches section (collapsible, grouped by date) -->
+          <template x-if="adminPlayedByDate.length > 0">
+            <div class="admin-section">
+              <button class="admin-section-head" @click="adminPlayedExpanded = !adminPlayedExpanded" :aria-expanded="adminPlayedExpanded">
+                <span class="section-icon">✓</span>
+                <span class="section-title">Изиграни</span>
+                <span class="section-count" x-text="playedMatches.length"></span>
+                <span class="section-chevron" x-text="adminPlayedExpanded ? '▾' : '▸'"></span>
+              </button>
+              <div class="admin-section-body" x-show="adminPlayedExpanded" x-transition>
+                <template x-for="g in adminPlayedByDate" :key="g.label">
+                  <div class="admin-list-group">
+                    <div class="admin-date-sep" x-text="g.label"></div>
+                    <template x-for="m in g.items" :key="m.key">
+                      <div class="admin-match-v2 played">
+                        <div class="admin-match-v2-info">
+                          <div class="match-vs played-vs">
+                            <span :class="{strong: m.winner===m.p1}" x-text="m.p1"></span>
+                            <span class="match-score" x-text="m.s1 + ':' + m.s2"></span>
+                            <span :class="{strong: m.winner===m.p2}" x-text="m.p2"></span>
+                          </div>
+                        </div>
+                        <button class="btn-ghost match-primary" @click="openScore(m)">
+                          <span>✎</span><span>Редактирай</span>
+                        </button>
+                        <button class="btn-icon match-more" @click="openMatchActions(m)" aria-label="Още">⋯</button>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- ===== Admin overflow menu ===== -->
+          <div class="admin-menu-backdrop" x-show="adminMenuOpen" @click="adminMenuOpen=false" x-transition.opacity style="display:none"></div>
+          <div class="admin-menu-sheet" x-show="adminMenuOpen" x-transition style="display:none">
+            <div class="admin-menu-handle"></div>
+            <button class="admin-menu-item" @click="adminMenuOpen=false; openWizard('schedule')">
+              <span class="mi-icon">📅</span><span class="mi-label">Планирай мач</span>
+            </button>
+            <button class="admin-menu-item" @click="adminMenuOpen=false; openWizard('result')">
+              <span class="mi-icon">🎾</span><span class="mi-label">Запиши резултат</span>
+            </button>
+            <button class="admin-menu-item" @click="adminMenuOpen=false; adminPlayersOpen=true">
+              <span class="mi-icon">👤</span><span class="mi-label">Играчи</span>
+              <span class="mi-meta" x-text="players.length"></span>
+            </button>
+            <hr class="admin-menu-sep" />
+            <button class="admin-menu-item" @click="adminMenuOpen=false; exportData()">
+              <span class="mi-icon">⬇</span><span class="mi-label">Експорт</span>
+            </button>
+            <!-- Импорт е скрит временно — твърде лесно се натиска по грешка
+                 и презаписва цялата база. Да се върне с потвърждение. -->
+            <button class="admin-menu-item" @click="adminMenuOpen=false; hardRefresh()">
+              <span class="mi-icon">↻</span><span class="mi-label">Презареди</span>
+            </button>
+            <hr class="admin-menu-sep" />
+            <button class="admin-menu-item" @click="adminAboutOpen=true">
+              <span class="mi-icon">ℹ</span><span class="mi-label">За приложението</span>
+            </button>
+            <button class="admin-menu-item danger" @click="adminMenuOpen=false; logout()">
+              <span class="mi-icon">↩</span><span class="mi-label">Изход</span>
+            </button>
+          </div>
+
+          <!-- ===== About sheet ===== -->
+          <div class="admin-menu-backdrop" x-show="adminAboutOpen" @click="adminAboutOpen=false" x-transition.opacity style="display:none"></div>
+          <div class="admin-about-sheet" x-show="adminAboutOpen" x-transition style="display:none">
+            <div class="admin-menu-handle"></div>
+            <h3>За приложението</h3>
+            <dl class="admin-about-grid">
+              <dt>Режим</dt>
+              <dd x-text="backendMode === 'api' ? 'Сървър' : 'Локално'"></dd>
+              <dt>Версия</dt>
+              <dd class="mono" x-text="appVersion || '—'"></dd>
+              <dt>Играчи</dt>
+              <dd x-text="players.length"></dd>
+              <dt>Изиграни</dt>
+              <dd x-text="playedMatches.length"></dd>
+              <dt>Планирани</dt>
+              <dd x-text="activeScheduledMatches.length"></dd>
+            </dl>
+            <button class="btn-ghost full" @click="adminAboutOpen=false">Затвори</button>
+          </div>
+
+          <!-- ===== Players drawer (full-width sheet) ===== -->
+          <div class="admin-menu-backdrop" x-show="adminPlayersOpen" @click="adminPlayersOpen=false" x-transition.opacity style="display:none"></div>
+          <div class="admin-players-drawer" x-show="adminPlayersOpen" x-transition style="display:none">
+            <div class="drawer-head">
+              <h3>Играчи · <span x-text="players.length"></span></h3>
+              <button class="btn-icon" @click="adminPlayersOpen=false" aria-label="Затвори">✕</button>
+            </div>
             <form class="add-player-row" @submit.prevent="
               const res = await addPlayer(newPlayerName);
               if (res.ok) { newPlayerName = ''; addPlayerError = ''; }
@@ -740,8 +890,7 @@
               <button type="submit" class="btn-primary">+ Добави</button>
             </form>
             <p class="add-player-error" x-show="addPlayerError" x-text="addPlayerError"></p>
-
-            <div class="players-list" x-show="playersExpanded" x-transition>
+            <div class="players-list">
               <template x-for="p in players" :key="p">
                 <div class="players-list-row">
                   <span class="avatar sm" :style="`--avatar-hue:${playerHue(p)}`"></span>
@@ -764,78 +913,24 @@
             </div>
           </div>
 
-          <div class="admin-toolbar">
-            <div class="chip-row scrollable">
-              <button class="chip" :class="{active: matchFilter==='scheduled'}" @click="matchFilter='scheduled'">
-                📅 Планирани · <span x-text="scheduledMatches.length"></span>
-              </button>
-              <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">
-                ✓ Изиграни · <span x-text="playedMatches.length"></span>
-              </button>
-              <button class="chip" :class="{active: matchFilter==='all'}" @click="matchFilter='all'">
-                Всички
-              </button>
-            </div>
-            <input type="search" x-model="matchSearch" placeholder="🔍 Търси играч..." class="admin-search" />
-          </div>
-
-          <div class="admin-list">
-            <template x-for="g in filteredMatchesGrouped" :key="g.label || '_flat'">
-              <div class="admin-list-group">
-                <template x-if="g.label">
-                  <div class="admin-date-sep" x-text="g.label"></div>
-                </template>
-                <template x-for="m in g.items" :key="m.key">
-              <div class="admin-match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
-                <div class="admin-match-info">
-                  <div class="admin-match-top">
-                    <span class="match-num" x-show="m.playNum">#<span x-text="m.playNum"></span></span>
-                    <template x-if="isMatchLive(m)">
-                      <span class="match-status live"><span class="live-dot"></span> LIVE <span x-text="formatLiveScore(m)"></span></span>
-                    </template>
-                    <template x-if="m.played">
-                      <span class="match-status played">✓</span>
-                    </template>
-                    <template x-if="!isMatchLive(m) && !m.played && m.scheduledAt">
-                      <span class="match-date">📅 <span x-text="formatDate(m.scheduledAt)"></span></span>
-                    </template>
-                  </div>
-                  <div class="admin-match-vs">
-                    <span :class="{strong: m.played && m.winner===m.p1}" x-text="m.p1"></span>
-                    <template x-if="m.played">
-                      <span class="admin-score" x-text="m.s1 + ':' + m.s2"></span>
-                    </template>
-                    <template x-if="!m.played">
-                      <span class="sep">vs</span>
-                    </template>
-                    <span :class="{strong: m.played && m.winner===m.p2}" x-text="m.p2"></span>
-                  </div>
+          <!-- ===== Match actions bottom sheet ===== -->
+          <div class="admin-menu-backdrop" x-show="adminMatchActions" @click="closeMatchActions()" x-transition.opacity style="display:none"></div>
+          <div class="admin-match-sheet" x-show="adminMatchActions" x-transition style="display:none">
+            <template x-if="adminMatchActions">
+              <div>
+                <div class="admin-menu-handle"></div>
+                <div class="match-sheet-head">
+                  <span x-text="adminMatchActions.p1"></span>
+                  <span class="vs">vs</span>
+                  <span x-text="adminMatchActions.p2"></span>
                 </div>
-                <div class="admin-match-actions">
-                  <template x-if="!m.played">
-                    <button class="btn-mini btn-live-mini" @click="openLive(m)" x-text="isMatchLive(m) ? '🔴 Продължи' : '🔴 На живо'"></button>
-                  </template>
-                  <template x-if="!m.played">
-                    <button class="btn-mini btn-primary" @click="openScore(m)">🎾 Резултат</button>
-                  </template>
-                  <template x-if="!m.played">
-                    <button class="btn-mini" @click="openSchedule(m)" x-text="m.scheduledAt ? '📅 Прегласувай' : '📅 Планирай'"></button>
-                  </template>
-                  <template x-if="!m.played && m.scheduledAt">
-                    <button class="btn-mini btn-danger" @click="if(confirm('Откажи планираната дата?')) clearSchedule(m)">✕</button>
-                  </template>
-                  <template x-if="isMatchLive(m)">
-                    <button class="btn-mini btn-danger" @click="clearLive(m)" title="Изтрий live (необратимо)">🗑 Изтрий live</button>
-                  </template>
-                  <template x-if="m.played">
-                    <button class="btn-mini" @click="openScore(m)">✎ Редактирай</button>
-                  </template>
-                  <template x-if="m.played">
-                    <button class="btn-mini btn-danger" @click="if(confirm('Изтрий резултата?')) clearResult(m)">✕</button>
-                  </template>
-                </div>
-              </div>
+                <template x-for="(act, i) in secondaryActionsFor(adminMatchActions)" :key="i">
+                  <button class="admin-menu-item" :class="{danger: act.danger}" @click="closeMatchActions(); act.handler()">
+                    <span class="mi-icon" x-text="act.icon"></span>
+                    <span class="mi-label" x-text="act.label"></span>
+                  </button>
                 </template>
+                <button class="btn-ghost full match-sheet-cancel" @click="closeMatchActions()">Откажи</button>
               </div>
             </template>
           </div>

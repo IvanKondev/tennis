@@ -29,6 +29,16 @@ document.addEventListener('alpine:init', () => {
     addPlayerError: '',
     playersExpanded: false,
 
+    // Admin v2 UI: progressive disclosure state. The admin panel is
+    // task-centric — only what the user needs RIGHT NOW is visible by
+    // default; everything else lives behind explicit toggles.
+    adminMenuOpen: false,         // ⋯ overflow menu (refresh/export/etc)
+    adminPlayersOpen: false,      // players drawer (rare action, hidden)
+    adminAboutOpen: false,        // backend mode + version detail sheet
+    adminMatchActions: null,      // bottom sheet for secondary match actions
+    adminFutureExpanded: false,   // collapsible "future matches" section
+    adminPlayedExpanded: false,   // collapsible "played matches" section
+
     scoreMatch: null,
     scheduleMatch: null,
     scheduleInput: '',
@@ -105,20 +115,29 @@ document.addEventListener('alpine:init', () => {
       this.recomputeDerived();
       this.loadAppVersion();
 
-      // Auto-restore admin auth from localStorage (admin device only).
-      // If the server is reachable and confirms 401 ⇒ wipe (stale password).
-      // If verification fails for any other reason (network blip, cold-start),
-      // optimistically grant admin: subsequent admin requests will get 401s
-      // if the password really is invalid, and onAdminUnauthorized() handles
-      // that. Refusing here would log the admin out on every transient blip.
-      const savedPass = localStorage.getItem('tennis-admin-pw');
-      if (savedPass && this.backendMode === 'api') {
-        const result = await this.verifyApiPassword(savedPass);
-        if (result === 'ok' || result === 'error') {
-          this._adminPassword = savedPass;
+      // Auto-restore admin auth from localStorage. We prefer a session token
+      // (rotated, server-revocable, no plaintext password on the wire). If
+      // only the legacy password is present, we silently exchange it for a
+      // token on first use and migrate the storage. Subsequent admin requests
+      // get 401s if the token is invalid; onAdminUnauthorized() handles that.
+      if (this.backendMode === 'api') {
+        const savedToken = localStorage.getItem('tennis-admin-token');
+        const legacyPass = localStorage.getItem('tennis-admin-pw');
+        if (savedToken) {
+          // Trust optimistically — first admin call will 401 if revoked/expired.
+          this._adminToken = savedToken;
           this.isAdmin = true;
-        } else {
-          localStorage.removeItem('tennis-admin-pw');
+        } else if (legacyPass) {
+          const result = await this.verifyApiPassword(legacyPass);
+          if (result.kind === 'ok') {
+            this._adminToken = result.token;
+            localStorage.setItem('tennis-admin-token', result.token);
+            localStorage.removeItem('tennis-admin-pw');
+            this.isAdmin = true;
+          } else if (result.kind === 'wrong') {
+            localStorage.removeItem('tennis-admin-pw');
+          }
+          // 'error' (network) → keep legacy pw, retry next boot.
         }
       }
 
@@ -177,6 +196,17 @@ document.addEventListener('alpine:init', () => {
     },
 
     async fetchServerVersion() {
+      // Prefer /api/version (canonical, ~80 bytes); fall back to parsing
+      // sw.js for older deploys that don't expose the endpoint yet.
+      try {
+        const res = await fetch(this.apiBase + '/version', { cache: 'no-store' });
+        if (res.ok) {
+          const j = await res.json();
+          if (j && typeof j.version === 'string' && j.version !== 'unknown') {
+            return j.version;
+          }
+        }
+      } catch (_) { /* fall through to sw.js */ }
       try {
         const res = await fetch('/sw.js', { cache: 'no-store' });
         if (!res.ok) return null;
@@ -355,14 +385,14 @@ document.addEventListener('alpine:init', () => {
       if (this._fromServer) return;
       this.persistLocal();
       if (this.backendMode !== 'api') return;
-      if (!this._adminPassword) return;
+      if (!this._adminToken) return;
       this.saveStatus = 'saving';
       try {
         const r = await fetch(this.apiBase + '/data', {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'X-Admin-Password': this._adminPassword
+            'X-Admin-Token': this._adminToken
           },
           body: JSON.stringify({
             results: this.results,
@@ -522,9 +552,11 @@ document.addEventListener('alpine:init', () => {
     },
 
     // Returns 'ok' | 'wrong' | 'error'.
-    // Distinguishes "password is wrong" (server said 401) from "server didn't
-    // answer" (network blip, cold-start) so the caller can decide whether to
-    // wipe a saved password — we only want to wipe on a confirmed wrong.
+    // Authenticates the password against the server and, on success, returns
+    // a session token to be used in subsequent admin requests. Distinguishes
+    // 'wrong' (confirmed bad password — wipe saved creds) from 'error' (server
+    // unreachable / network blip — keep saved creds and try later).
+    // Returns one of: { kind: 'ok', token }, { kind: 'wrong' }, { kind: 'error' }
     async verifyApiPassword(password) {
       try {
         const r = await fetch(this.apiBase + '/auth', {
@@ -532,11 +564,17 @@ document.addEventListener('alpine:init', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        if (r.ok) return 'ok';
-        if (r.status === 401) return 'wrong';
-        return 'error';
+        if (r.ok) {
+          const j = await r.json().catch(() => ({}));
+          if (j && typeof j.token === 'string' && j.token.length > 0) {
+            return { kind: 'ok', token: j.token };
+          }
+          return { kind: 'error' };  // server said 200 but no token — odd
+        }
+        if (r.status === 401) return { kind: 'wrong' };
+        return { kind: 'error' };
       } catch (e) {
-        return 'error';
+        return { kind: 'error' };
       }
     },
 
@@ -777,11 +815,11 @@ document.addEventListener('alpine:init', () => {
       if (this.players.includes(name)) return { ok: false, error: 'Играчът вече съществува' };
 
       if (this.backendMode === 'api') {
-        if (!this._adminPassword) return { ok: false, error: 'Необходима е админ парола' };
+        if (!this._adminToken) return { ok: false, error: 'Необходима е админ парола' };
         try {
           const r = await fetch(this.apiBase + '/players', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Admin-Password': this._adminPassword },
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this._adminToken },
             body: JSON.stringify({ name })
           });
           const data = await r.json().catch(() => ({}));
@@ -811,11 +849,11 @@ document.addEventListener('alpine:init', () => {
       if (this.players.includes(newName)) return { ok: false, error: 'Име вече съществува' };
 
       if (this.backendMode === 'api') {
-        if (!this._adminPassword) return { ok: false, error: 'Необходима е админ парола' };
+        if (!this._adminToken) return { ok: false, error: 'Необходима е админ парола' };
         try {
           const r = await fetch(this.apiBase + '/players/' + encodeURIComponent(oldName), {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'X-Admin-Password': this._adminPassword },
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this._adminToken },
             body: JSON.stringify({ name: newName })
           });
           const data = await r.json().catch(() => ({}));
@@ -865,11 +903,11 @@ document.addEventListener('alpine:init', () => {
       if (!this.players.includes(name)) return { ok: false, error: 'Няма такъв играч' };
 
       if (this.backendMode === 'api') {
-        if (!this._adminPassword) return { ok: false, error: 'Необходима е админ парола' };
+        if (!this._adminToken) return { ok: false, error: 'Необходима е админ парола' };
         try {
           const r = await fetch(this.apiBase + '/players/' + encodeURIComponent(name), {
             method: 'DELETE',
-            headers: { 'X-Admin-Password': this._adminPassword }
+            headers: { 'X-Admin-Token': this._adminToken }
           });
           const data = await r.json().catch(() => ({}));
           if (r.status === 401) { this._handleAdminUnauthorized(); return { ok: false, error: 'Сесията изтече' }; }
@@ -952,7 +990,7 @@ document.addEventListener('alpine:init', () => {
 
       // Non-admin on match day: persist() will bail (no admin pwd).
       // Use the dedicated endpoint instead so the result reaches the server.
-      if (this.backendMode === 'api' && !this._adminPassword) {
+      if (this.backendMode === 'api' && !this._adminToken) {
         this._submitResultRemote(match, s1, s2);
       }
     },
@@ -1224,19 +1262,19 @@ document.addEventListener('alpine:init', () => {
         return;
       }
 
-      // API mode — verify against server
+      // API mode — verify against server, get session token in return.
       if (this.backendMode === 'api') {
         const result = await this.verifyApiPassword(this.passwordInput);
-        if (result === 'wrong') {
+        if (result.kind === 'wrong') {
           this.passwordError = 'Грешна парола';
           return;
         }
-        if (result === 'error') {
+        if (result.kind === 'error') {
           this.passwordError = 'Сървърът не отговаря — опитай пак';
           return;
         }
-        this._adminPassword = this.passwordInput;
-        localStorage.setItem('tennis-admin-pw', this.passwordInput);
+        this._adminToken = result.token;
+        localStorage.setItem('tennis-admin-token', result.token);
         // Trigger the browser save prompt BEFORE we clear the input or hide
         // the form (Alpine's x-if removes the DOM and would defeat the API).
         await this._offerSaveCredential(formEl);
@@ -1261,10 +1299,21 @@ document.addEventListener('alpine:init', () => {
       this.passwordInput = '';
     },
 
-    logout() {
+    async logout() {
+      // Best-effort revoke server-side; we proceed regardless of result.
+      const token = this._adminToken;
       this.isAdmin = false;
-      this._adminPassword = null;
+      this._adminToken = null;
+      localStorage.removeItem('tennis-admin-token');
       localStorage.removeItem('tennis-admin-pw');
+      if (token && this.backendMode === 'api') {
+        try {
+          await fetch(this.apiBase + '/auth', {
+            method: 'DELETE',
+            headers: { 'X-Admin-Token': token }
+          });
+        } catch (_) { /* ignore */ }
+      }
     },
 
     // Force a clean reload: unregister service workers, drop every Cache
@@ -1296,7 +1345,8 @@ document.addEventListener('alpine:init', () => {
     _handleAdminUnauthorized() {
       if (!this.isAdmin) return;
       this.isAdmin = false;
-      this._adminPassword = null;
+      this._adminToken = null;
+      localStorage.removeItem('tennis-admin-token');
       localStorage.removeItem('tennis-admin-pw');
       this.showToast('⚠️ Сесията изтече — влез отново');
     },
@@ -1674,7 +1724,7 @@ document.addEventListener('alpine:init', () => {
       this.liveError = '';
       try {
         const headers = { 'Content-Type': 'application/json' };
-        if (this._adminPassword) headers['X-Admin-Password'] = this._adminPassword;
+        if (this._adminToken) headers['X-Admin-Token'] = this._adminToken;
         const r = await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
           method: 'POST',
           headers,
@@ -1739,7 +1789,7 @@ document.addEventListener('alpine:init', () => {
       try {
         const r = await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
           method: 'DELETE',
-          headers: { 'X-Admin-Password': this._adminPassword || '' }
+          headers: { 'X-Admin-Token': this._adminToken || '' }
         });
         if (!r.ok) {
           this.showToast('⚠️ Грешка при изтриване на live');
@@ -1791,7 +1841,7 @@ document.addEventListener('alpine:init', () => {
       if (this.backendMode !== 'api') return;
       try {
         const headers = { 'Content-Type': 'application/json' };
-        if (this._adminPassword) headers['X-Admin-Password'] = this._adminPassword;
+        if (this._adminToken) headers['X-Admin-Token'] = this._adminToken;
         await fetch(this.apiBase + '/match/' + encodeURIComponent(key) + '/live', {
           method: 'POST',
           headers,
@@ -1923,6 +1973,134 @@ document.addEventListener('alpine:init', () => {
         if (m && !m.played) list.push(m);
       }
       return list;
+    },
+
+    // ===== Admin v2 derived state =====
+
+    // "Днес · 11 май, понеделник" — header for the today hero.
+    get adminTodayLabel() {
+      const d = new Date();
+      // toLocaleDateString in bg-BG: "понеделник, 11 май"
+      const human = d.toLocaleDateString('bg-BG', {
+        weekday: 'long', day: 'numeric', month: 'long'
+      });
+      return 'Днес · ' + human;
+    },
+
+    // Are there ANY matches that warrant the today hero?
+    get adminHasTodayContent() {
+      return this.liveMatchesList.length > 0
+        || this.matchesShouldBeLive.length > 0
+        || this.todaysMatches.length > 0;
+    },
+
+    // Scheduled matches NOT today, not played, sorted by scheduled time asc.
+    // (todaysMatches handles "today scheduled future"; this is everything later.)
+    get adminFutureMatches() {
+      const todayStr = this.todayISO();
+      return this.activeScheduledMatches
+        .filter(m => m.scheduledAt && m.scheduledAt.slice(0, 10) > todayStr)
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+    },
+
+    // Played matches grouped by recordedAt date (descending).
+    // Undated entries (legacy) collected into a single "По-стари" bucket.
+    get adminPlayedByDate() {
+      const recAt = this.resultsRecordedAt || {};
+      const todayStr = this.todayISO();
+      const y = new Date(todayStr + 'T00:00:00');
+      y.setDate(y.getDate() - 1);
+      const yesterdayStr = this.toISODate(y);
+
+      const dated = [];
+      const undated = [];
+      for (const m of this.playedMatches) {
+        const ts = recAt[m.key];
+        if (ts) dated.push({ m, ts });
+        else undated.push(m);
+      }
+      dated.sort((a, b) => b.ts.localeCompare(a.ts));
+
+      const groups = [];
+      let cur = null;
+      for (const { m, ts } of dated) {
+        const d = ts.slice(0, 10);
+        let label;
+        if (d === todayStr) label = 'Днес';
+        else if (d === yesterdayStr) label = 'Вчера';
+        else label = new Date(ts).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
+        if (!cur || cur.label !== label) {
+          cur = { label, items: [] };
+          groups.push(cur);
+        }
+        cur.items.push(m);
+      }
+      if (undated.length > 0) groups.push({ label: 'По-стари', items: undated });
+      return groups;
+    },
+
+    // Decide the ONE primary action button for a match given its state.
+    // Returns { label, icon, kind, handler }. Safe to call with null/undefined
+    // (Alpine evaluates bindings inside x-if before rendering the gate).
+    primaryActionFor(m) {
+      if (!m) return { label: '', icon: '', kind: 'primary', handler: () => {} };
+      if (m.played) {
+        return { label: 'Редактирай', icon: '✎', kind: 'ghost', handler: () => this.openScore(m) };
+      }
+      if (this.isMatchLive(m)) {
+        return { label: 'Продължи на живо', icon: '▶', kind: 'live', handler: () => this.openLive(m) };
+      }
+      // Scheduled today (any time) → primary is "live". For future-day matches
+      // primary is "result" since admin most often pre-records, not live-scores.
+      const todayStr = this.todayISO();
+      const isToday = m.scheduledAt && m.scheduledAt.slice(0, 10) === todayStr;
+      if (isToday) {
+        return { label: 'На живо', icon: '▶', kind: 'live', handler: () => this.openLive(m) };
+      }
+      return { label: 'Резултат', icon: '🎾', kind: 'primary', handler: () => this.openScore(m) };
+    },
+
+    // Secondary actions for a match's bottom-sheet menu. Filtered by state.
+    secondaryActionsFor(m) {
+      if (!m) return [];
+      const acts = [];
+      if (m.played) {
+        acts.push({ label: 'Изтрий резултата', icon: '✕', danger: true,
+          handler: () => { if (confirm('Изтрий резултата?')) this.clearResult(m); } });
+        return acts;
+      }
+      // Not played:
+      const primary = this.primaryActionFor(m);
+      if (primary.kind !== 'live') {
+        acts.push({ label: this.isMatchLive(m) ? 'Продължи на живо' : 'На живо',
+          icon: '▶', handler: () => this.openLive(m) });
+      }
+      if (primary.kind !== 'primary') {
+        acts.push({ label: 'Запиши резултат', icon: '🎾',
+          handler: () => this.openScore(m) });
+      }
+      acts.push({
+        label: m.scheduledAt ? 'Премести' : 'Планирай',
+        icon: '📅',
+        handler: () => this.openSchedule(m)
+      });
+      if (m.scheduledAt) {
+        acts.push({ label: 'Откажи план', icon: '✕', danger: true,
+          handler: () => { if (confirm('Откажи планираната дата?')) this.clearSchedule(m); } });
+      }
+      if (this.isMatchLive(m)) {
+        acts.push({ label: 'Изтрий live', icon: '🗑', danger: true,
+          handler: () => this.clearLive(m) });
+      }
+      return acts;
+    },
+
+    openMatchActions(m) {
+      this.adminMatchActions = m;
+    },
+
+    closeMatchActions() {
+      this.adminMatchActions = null;
     },
 
     // ======= EXPORT / IMPORT =======

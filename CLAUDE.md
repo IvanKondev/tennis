@@ -39,7 +39,7 @@ COPY index.html styles.css app.js data.js alpine.min.js sw.js ./public/
 COPY manifest.webmanifest og.png og.svg favicon.svg apple-touch-icon.png ./public/
 ```
 
-### 4. Did I add a new API endpoint? → check key validation
+### 4. Did I add a new API endpoint? → check key validation + audit
 
 All match-key-bearing endpoints **must** validate against `buildValidKeys(data.players)` (server.js). The whitelist is derived dynamically from the current player roster. Existing endpoints that do this:
 - `POST /api/match/<key>/live`
@@ -47,6 +47,10 @@ All match-key-bearing endpoints **must** validate against `buildValidKeys(data.p
 - `POST /api/match/<key>/result`
 - `PUT /api/data` (validates all keys in `results`/`schedule`/`live`/`resultsRecordedAt`)
 - `POST /api/players` (admin-only, name validation: non-empty, ≤40 chars, no `|`, unique)
+
+**Admin authentication**: use `checkAdmin(req)` which prefers session token (`X-Admin-Token` header) over plaintext password (`X-Admin-Password` — kept for transitional backward-compat only). Tokens are issued by `POST /api/auth` and revoked by `DELETE /api/auth`. Don't write new endpoints that accept the password header directly.
+
+**Audit log**: every successful admin mutation **must** call `audit(req, '<action>', { ... })`. Lines go to `<DATA_DIR>/audit.jsonl` and are the forensic record. Action names follow `<noun>.<verb>` (e.g. `player.delete`, `match.finalize`).
 
 ### 5. Did I change persisted data shape? → migration consideration
 
@@ -70,15 +74,30 @@ Both auto-clean `schedule[key]` and `live[key]` on finalize. If you add a third 
 - **Anti-loop flag**: `_fromServer = true` before applying server data, cleared in microtask. `persist()` bails if set.
 - **Two-mode backend**: `backendMode = 'api'` (server) or `'local'` (localStorage). Detected at boot via `/api/health`. Same code runs in both.
 
+## Operational scale
+
+Calibrate any architectural suggestion against the real numbers — this is a hobby league, not SaaS:
+
+- **Tournament size**: max 40–50 players per tournament. Round-robin → up to ~1225 matches total over the tournament's lifetime.
+- **Daily traffic**: max 4–5 matches/day during active periods. Live-scoring concurrency is single-digit at peak (one ongoing match at a time, occasionally two).
+- **Data file size**: the JSON stays under ~150 KB even at full scale. No reason to migrate to SQLite/Postgres.
+- **Single admin** (occasionally a small handful). Multi-user RBAC is overkill.
+- **Single host** on Coolify. No HA / no replicas. RPO target: yesterday's off-site backup. RTO target: ~30 min manual restore.
+
+When tempted to add infra "for scale" — reread the numbers above. If the change isn't justified at 50 players × 5 matches/day, don't ship it.
+
 ## Things that are intentionally not done
 
-Don't "fix" these without explicit user request:
+Don't "fix" these without explicit user request — each was a deliberate scale-vs-complexity tradeoff:
 
-- **No build step.** Files are served as authored. No bundler, no TS, no minification beyond what's already shipped.
-- **No npm dependencies.** Server uses only Node built-ins. Adding `express` or similar is a no.
-- **No SQL/Postgres.** Single JSON file. Don't suggest "scaling" the storage.
-- **Plain-text admin password in env var.** Standard 12-factor; don't propose hashing without context.
+- **No build step.** Files served as authored. No bundler, no TS, no minification beyond what's shipped.
+- **No npm dependencies.** Server uses only Node built-ins. Adding `express` etc. is a no.
+- **No SQL/Postgres.** Single JSON file is correct at this scale (≤150 KB). Don't suggest "scaling" the storage.
+- **Plain-text admin password in env var** (paired with timing-safe compare server-side and short-lived session token client-side — never the password itself in storage). Standard 12-factor.
+- **No multi-user / RBAC.** One shared admin role is the right size for a hobby league.
+- **Polling, not WebSocket/SSE.** 5–10 s lag is fine for casual live scoring; real-time push is not worth the ops complexity.
 - **Cyrillic in keys/strings everywhere.** UTF-8 is the source of truth. Don't transliterate.
+- **No staging environment.** Small PRs + tested rollback path is sufficient at this scale.
 
 ## Local development
 
@@ -90,15 +109,16 @@ node server.js
 
 ## Tests
 
-Pure server helpers are unit-tested with Node's built-in `node:test` (no npm deps). Run from project root:
+Two suites, both using Node's built-in `node:test` (no npm deps):
+
+- `test/server.test.js` — pure helpers + readData/writeData round-trips. Covers: `buildValidKeys`, `clampInt`, `validateLiveBody`, `migratePlayerRename`, `migratePlayerDelete`, `safeStringEqual`, `todayLocalISO`, `authRateCheck`/`Record`, backup rotation, EBADJSON behavior.
+- `test/http.test.js` — HTTP integration: binds the server to an ephemeral port and exercises real handler glue. Covers: `/api/health`, `/api/version`, `/api/auth` (wrong/correct/invalid-json/token-revoke), `/api/players` (validation, cyrillic), `/api/match/<key>/result` (admin/non-admin/invalid score/unknown pair), security headers.
 
 ```powershell
-npm test          # or: node --test test/server.test.js
+npm test          # runs both suites
 ```
 
-Coverage: `buildValidKeys`, `clampInt`, `validateLiveBody`, `migratePlayerRename`, `migratePlayerDelete`, `readData`/`writeData` round-trips, backup rotation, EBADJSON behavior. HTTP handlers are not directly tested — they're thin glue around the pure helpers, with the atomicity guarantee ("no awaits between readData and writeData") verified by code review.
-
-When adding a new pure helper or migration function, add a test alongside it. When adding a handler that does a read-modify-write, audit it for the same atomicity invariant.
+When adding a new pure helper or migration function, add a `server.test.js` test alongside it. When adding a new HTTP handler, add an `http.test.js` test exercising the happy path + at least one error case.
 
 Note: server reads from `public/` by default. The Dockerfile builds that layout. For local dev that needs the static frontend (not just API), either copy files to `./public/` or open `index.html` directly via `file://` (frontend auto-detects and falls back to localStorage mode).
 

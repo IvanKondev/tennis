@@ -15,5 +15,6 @@ public/
 
 # Playwright MCP snapshots & test screenshots
 .playwright-mcp/
-admin-mobile-*.png
+admin-*.png
 *-mobile-*.png
+page-*.png

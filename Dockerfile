@@ -1,3 +1,7 @@
+# For reproducible builds, pin to a digest. To get the current digest:
+#   docker pull node:20-alpine && docker inspect node:20-alpine \
+#     --format '{{ index .RepoDigests 0 }}'
+# Then replace the line below with: FROM node:20-alpine@sha256:<digest>
 FROM node:20-alpine
 
 WORKDIR /app
@@ -16,6 +20,12 @@ VOLUME ["/data"]
 
 ENV PORT=3000
 ENV DATA_DIR=/data
+# Server-side date logic ("is this match scheduled for TODAY?") must use the
+# tournament's local timezone, not UTC. Without this, a Bulgarian admin
+# scheduling a match for 19:00 Sofia time would have the non-admin scoring
+# endpoint reject the result after ~21:00 UTC because the server thinks the
+# date already rolled over.
+ENV TZ=Europe/Sofia
 # ADMIN_PASSWORD MUST be set at runtime via Coolify env vars
 
 EXPOSE 3000
