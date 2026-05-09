@@ -499,25 +499,26 @@
                   </template>
                 </div>
                 <div class="match-row">
-                  <div class="match-player" :class="m.played ? (m.winner===m.p1 ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(m.p1)">
-                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
-                    <span class="name" x-text="m.p1"></span>
+                  <!-- Always render the group player on the left so the eye can scan a single column -->
+                  <div class="match-player" :class="m.played ? (m.winner===g.player ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(g.player)">
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(g.player)}`" x-text="initials(g.player)"></span>
+                    <span class="name" x-text="g.player"></span>
                   </div>
                   <div class="match-score">
                     <template x-if="m.played">
                       <div>
-                        <span :class="m.s1>m.s2 ? 's-win' : 's-loss'" x-text="m.s1"></span>
+                        <span :class="(m.p1===g.player ? m.s1 : m.s2) > (m.p1===g.player ? m.s2 : m.s1) ? 's-win' : 's-loss'" x-text="m.p1===g.player ? m.s1 : m.s2"></span>
                         <span class="score-sep">:</span>
-                        <span :class="m.s2>m.s1 ? 's-win' : 's-loss'" x-text="m.s2"></span>
+                        <span :class="(m.p1===g.player ? m.s2 : m.s1) > (m.p1===g.player ? m.s1 : m.s2) ? 's-win' : 's-loss'" x-text="m.p1===g.player ? m.s2 : m.s1"></span>
                       </div>
                     </template>
                     <template x-if="!m.played">
                       <span class="score-pending">vs</span>
                     </template>
                   </div>
-                  <div class="match-player right" :class="m.played ? (m.winner===m.p2 ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(m.p2)">
-                    <span class="name" x-text="m.p2"></span>
-                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                  <div class="match-player right" :class="m.played ? (m.winner===(m.p1===g.player ? m.p2 : m.p1) ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(m.p1===g.player ? m.p2 : m.p1)">
+                    <span class="name" x-text="m.p1===g.player ? m.p2 : m.p1"></span>
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p1===g.player ? m.p2 : m.p1)}`" x-text="initials(m.p1===g.player ? m.p2 : m.p1)"></span>
                   </div>
                 </div>
                 <template x-if="canWriteToday(m)">

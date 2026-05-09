@@ -1511,23 +1511,42 @@ document.addEventListener('alpine:init', () => {
       return groups;
     },
 
-    // Last 5 played matches that were recorded via the app (have recordedAt).
-    // Legacy seed entries without a timestamp are intentionally excluded —
-    // they're bulk-imported historic data, not "recent activity".
+    // Last 5 played matches that count as "recent activity" — entered via
+    // the app rather than imported with the seed. We classify by:
+    //   - has recordedAt → recent (regardless of source)
+    //   - no recordedAt + seed had it pre-played → legacy bulk-import, skip
+    //   - no recordedAt + seed did NOT have it → entered via app before
+    //     timestamping shipped (or via a path that didn't stamp); include
+    //     and sort after the timestamped ones by SEED index desc.
     get recentResults() {
+      if (!this._seedPrePlayedKeys) {
+        const s = new Set();
+        for (const [p1, p2, res] of MATCHES_SEED) {
+          if (res) s.add(p1 + '|' + p2);
+        }
+        this._seedPrePlayedKeys = s;
+      }
+      const seedPlayed = this._seedPrePlayedKeys;
       const recAt = this.resultsRecordedAt || {};
       const out = [];
       for (const m of this.matches) {
         if (!m.played) continue;
-        const ts = recAt[m.key];
-        if (!ts) continue;
+        const ts = recAt[m.key] || null;
+        if (!ts && seedPlayed.has(m.key)) continue;
         out.push({ key: m.key, match: m, recordedAt: ts });
       }
-      out.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+      out.sort((a, b) => {
+        if (a.recordedAt && b.recordedAt) return b.recordedAt.localeCompare(a.recordedAt);
+        if (a.recordedAt) return -1;
+        if (b.recordedAt) return 1;
+        return b.match.num - a.match.num;
+      });
       return out.slice(0, 5);
     },
 
-    // Group recentResults by recorded-day with labels: Днес / Вчера / "5 май".
+    // Group recentResults by recorded-day. Labels: Днес / Вчера / "5 май".
+    // Entries without recordedAt (post-seed app entries from before stamping
+    // shipped) fall under "По-рано".
     get recentResultsByDate() {
       const recent = this.recentResults;
       if (recent.length === 0) return [];
@@ -1540,11 +1559,15 @@ document.addEventListener('alpine:init', () => {
       const groups = [];
       let cur = null;
       for (const r of recent) {
-        const d = r.recordedAt.slice(0, 10);
         let label;
-        if (d === todayStr) label = 'Днес';
-        else if (d === yesterdayStr) label = 'Вчера';
-        else label = new Date(r.recordedAt).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
+        if (r.recordedAt) {
+          const d = r.recordedAt.slice(0, 10);
+          if (d === todayStr) label = 'Днес';
+          else if (d === yesterdayStr) label = 'Вчера';
+          else label = new Date(r.recordedAt).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
+        } else {
+          label = 'По-рано';
+        }
         if (!cur || cur.label !== label) {
           cur = { label, items: [] };
           groups.push(cur);
