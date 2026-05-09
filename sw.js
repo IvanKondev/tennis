@@ -6,7 +6,7 @@
 //   other static     → stale-while-revalidate
 //
 // Bump CACHE_VERSION whenever shell assets change to force a refresh.
-const CACHE_VERSION = 'tennis-v27';
+const CACHE_VERSION = 'tennis-v28';
 const SHELL = [
   '/',
   '/index.html',

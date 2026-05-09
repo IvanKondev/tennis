@@ -88,6 +88,9 @@ document.addEventListener('alpine:init', () => {
     // background. Shown as a tap-to-reload banner.
     swUpdateReady: false,
 
+    // App version, read from sw.js CACHE_VERSION at boot.
+    appVersion: '',
+
     // ===== Derived state (recomputed only when results/schedule change) =====
     matches: [],
     matchByPair: {},
@@ -100,6 +103,7 @@ document.addEventListener('alpine:init', () => {
       await this.detectBackend();
       await this.load();
       this.recomputeDerived();
+      this.loadAppVersion();
 
       // Auto-restore admin auth from localStorage (admin device only).
       // If the server is reachable and confirms 401 ⇒ wipe (stale password).
@@ -155,6 +159,16 @@ document.addEventListener('alpine:init', () => {
         };
         setTimeout(tryAutoReload, 30000);
       });
+    },
+
+    async loadAppVersion() {
+      try {
+        const res = await fetch('/sw.js', { cache: 'no-store' });
+        if (!res.ok) return;
+        const text = await res.text();
+        const m = text.match(/CACHE_VERSION\s*=\s*['"]([^'"]+)['"]/);
+        if (m) this.appVersion = m[1];
+      } catch (_) { /* ignore */ }
     },
 
     recomputeDerived() {
