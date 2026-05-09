@@ -162,13 +162,29 @@ document.addEventListener('alpine:init', () => {
     },
 
     async loadAppVersion() {
+      const v = await this.fetchServerVersion();
+      if (v) this.appVersion = v;
+      // Belt-and-suspenders: poll every 60s for version mismatch. Catches the
+      // edge case where SW lifecycle events (updatefound / controllerchange)
+      // were missed for any reason (race, network blip, browser quirk). If
+      // the running version differs from what the server now reports, surface
+      // the update banner — the same one users get for SW-detected updates.
+      setInterval(async () => {
+        if (this.swUpdateReady || !this.appVersion) return;
+        const current = await this.fetchServerVersion();
+        if (current && current !== this.appVersion) this.swUpdateReady = true;
+      }, 60 * 1000);
+    },
+
+    async fetchServerVersion() {
       try {
         const res = await fetch('/sw.js', { cache: 'no-store' });
-        if (!res.ok) return;
+        if (!res.ok) return null;
         const text = await res.text();
         const m = text.match(/CACHE_VERSION\s*=\s*['"]([^'"]+)['"]/);
-        if (m) this.appVersion = m[1];
+        if (m && m[1] && m[1] !== '__CACHE_VERSION__') return m[1];
       } catch (_) { /* ignore */ }
+      return null;
     },
 
     recomputeDerived() {

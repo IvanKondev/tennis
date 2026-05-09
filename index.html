@@ -45,11 +45,23 @@
 <script defer src="alpine.min.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
+    // Track whether there was already a controller at page load. If yes,
+    // a future controllerchange means an update took over (banner-worthy).
+    // If no, controllerchange is just first-install — don't pester the user.
+    const hadControllerAtLoad = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadControllerAtLoad) {
+        window.dispatchEvent(new CustomEvent('sw-update-available'));
+      }
+    });
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js').then(reg => {
-        // Detect when a new version is downloaded and ready in the background.
-        // The page is still running old code; we surface a "tap to reload" banner.
         if (!reg) return;
+        // Detect a SW that's already installed and ready (race: install finished
+        // before this listener was attached). Trigger update banner immediately.
+        if (reg.waiting && navigator.serviceWorker.controller) {
+          window.dispatchEvent(new CustomEvent('sw-update-available'));
+        }
         const watchInstalling = (sw) => {
           if (!sw) return;
           sw.addEventListener('statechange', () => {

@@ -362,8 +362,16 @@ function serveStatic(req, res, urlPath) {
     res.writeHead(404); return res.end('not found');
   }
 
-  // Conditional GET — instant 304
-  if (req.headers['if-none-match'] === cached.etag) {
+  // sw.js MUST never be served from any intermediate cache (CDN/proxy/browser
+  // HTTP cache). The browser bypasses HTTP cache for SW script fetches per
+  // the spec, but `no-store` keeps shared caches honest too — without it a
+  // CDN with stale rules could pin clients to an old SW indefinitely. Skip
+  // the 304 short-circuit since responses are tiny and we want guaranteed
+  // freshness on every request.
+  const isServiceWorker = path.basename(filePath) === 'sw.js';
+
+  // Conditional GET — instant 304 (skipped for sw.js)
+  if (!isServiceWorker && req.headers['if-none-match'] === cached.etag) {
     res.writeHead(304, { 'ETag': cached.etag });
     return res.end();
   }
@@ -378,9 +386,10 @@ function serveStatic(req, res, urlPath) {
   const headers = {
     'Content-Type': MIME[cached.ext] || 'application/octet-stream',
     'ETag': cached.etag,
-    'Cache-Control': longCache
-      ? 'public, max-age=604800, immutable'
-      : 'public, max-age=0, must-revalidate'
+    'Cache-Control': isServiceWorker
+      ? 'no-store, no-cache, must-revalidate'
+      : (longCache ? 'public, max-age=604800, immutable'
+                   : 'public, max-age=0, must-revalidate')
   };
 
   // Prefer Brotli over Gzip if both supported.
