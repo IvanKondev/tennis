@@ -2006,6 +2006,97 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   border-top: 1px dashed var(--line);
 }
 .admin-list-group:first-child .admin-date-sep { border-top: none; margin-top: 0; padding-top: 4px; }
+
+.players-admin {
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 12px 0 16px;
+}
+.players-toggle {
+  margin-left: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 10px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.players-toggle:hover { background: var(--bg-3); color: var(--text); }
+.players-list {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.players-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-radius: 8px;
+}
+.players-list-row + .players-list-row { border-top: 1px solid var(--line); }
+.players-list-name {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 600;
+}
+.players-list-row .btn-mini { padding: 4px 8px; font-size: 12px; }
+.add-player-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.add-player-icon { font-size: 18px; }
+.add-player-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+.add-player-row {
+  display: flex;
+  gap: 8px;
+}
+.add-player-row input {
+  flex: 1;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.add-player-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.add-player-row .btn-primary {
+  padding: 10px 18px;
+  white-space: nowrap;
+}
+.add-player-error {
+  color: #f87171;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+.add-player-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin: 8px 0 0;
+}
 .recent-result-row:hover { background: var(--bg-2); }
 
 .rr-side {

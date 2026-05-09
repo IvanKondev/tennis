@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const { MATCHES_SEED } = require('./data.js');
+const { PLAYERS } = require('./data.js');
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const DATA_FILE = path.join(DATA_DIR, 'tennis.json');
@@ -15,8 +15,65 @@ if (!ADMIN_PASSWORD) {
   console.warn('[WARN] ADMIN_PASSWORD not set — admin writes are disabled.');
 }
 
-// Set of valid canonical match keys (one direction only — same as MATCHES_SEED)
-const VALID_KEYS = new Set(MATCHES_SEED.map(([a, b]) => a + '|' + b));
+// Canonical match keys are derived from the current player list, NOT a static
+// MATCHES_SEED — players can be added at runtime via POST /api/players.
+function buildValidKeys(players) {
+  const set = new Set();
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
+      set.add(players[i] + '|' + players[j]);
+    }
+  }
+  return set;
+}
+
+// Pure data transforms for player rename / delete. The HTTP handlers call
+// these inside their atomic critical section; tests exercise them directly.
+//
+// Rename preserves the player's index in the list, so "P1|P2" canonical key
+// ordering is stable — only the substring swaps. Delete cascades through all
+// four maps to remove every match the player participated in.
+function migratePlayerRename(data, oldName, newName) {
+  const renameKey = (k) => {
+    const [a, b] = k.split('|');
+    if (a === oldName) return newName + '|' + b;
+    if (b === oldName) return a + '|' + newName;
+    return k;
+  };
+  const remap = (obj) => {
+    const out = {};
+    for (const k in obj) out[renameKey(k)] = obj[k];
+    return out;
+  };
+  return {
+    ...data,
+    players: data.players.map(p => p === oldName ? newName : p),
+    results: remap(data.results),
+    schedule: remap(data.schedule),
+    live: remap(data.live),
+    resultsRecordedAt: remap(data.resultsRecordedAt)
+  };
+}
+
+function migratePlayerDelete(data, name) {
+  const involves = (k) => {
+    const [a, b] = k.split('|');
+    return a === name || b === name;
+  };
+  const filterKeys = (obj) => {
+    const out = {};
+    for (const k in obj) if (!involves(k)) out[k] = obj[k];
+    return out;
+  };
+  return {
+    ...data,
+    players: data.players.filter(p => p !== name),
+    results: filterKeys(data.results),
+    schedule: filterKeys(data.schedule),
+    live: filterKeys(data.live),
+    resultsRecordedAt: filterKeys(data.resultsRecordedAt)
+  };
+}
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DATA_FILE)) {
@@ -120,14 +177,29 @@ function preloadPublicDir() {
 
 preloadPublicDir();
 
+// Reads data from disk. Throws on parse failure — the caller MUST handle that
+// rather than silently get a default {}, otherwise the next writeData would
+// overwrite a corrupt-but-recoverable file with an empty state, losing data.
 function readData() {
+  let raw;
+  try { raw = fs.readFileSync(DATA_FILE, 'utf-8'); }
+  catch (e) {
+    // Missing file is fine: ensureDataFileExists creates it at startup.
+    if (e.code === 'ENOENT') raw = '{}';
+    else throw e;
+  }
   let d;
-  try { d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); }
-  catch (e) { d = {}; }
+  try { d = JSON.parse(raw); }
+  catch (e) {
+    const err = new Error('data file is corrupt: ' + e.message);
+    err.code = 'EBADJSON';
+    throw err;
+  }
   if (!d.results) d.results = {};
   if (!d.schedule) d.schedule = {};
   if (!d.live) d.live = {};
   if (!d.resultsRecordedAt) d.resultsRecordedAt = {};
+  if (!Array.isArray(d.players) || d.players.length === 0) d.players = PLAYERS.slice();
   return d;
 }
 
@@ -184,11 +256,43 @@ function dataETag() {
   } catch (e) { return '"empty"'; }
 }
 
+// Atomic write with rotating backups + fsync for durability.
+// Sequence:
+//   1. Rotate existing backups: bak.2 → bak.3, bak.1 → bak.2, current → bak.1
+//   2. Write new content to tennis.json.tmp, fsync the file
+//   3. Rename .tmp → tennis.json (atomic on POSIX; same dir on Windows)
+//   4. fsync the directory so the rename itself reaches disk
+// On corruption you can manually recover from .bak.1/.bak.2/.bak.3.
 function writeData(data) {
   const tmp = DATA_FILE + '.tmp';
   const json = JSON.stringify(data, null, 2);
-  fs.writeFileSync(tmp, json);
+
+  // Step 1 — rotate backups (best-effort; missing files are fine).
+  try { if (fs.existsSync(DATA_FILE + '.bak.2')) fs.renameSync(DATA_FILE + '.bak.2', DATA_FILE + '.bak.3'); } catch (e) {}
+  try { if (fs.existsSync(DATA_FILE + '.bak.1')) fs.renameSync(DATA_FILE + '.bak.1', DATA_FILE + '.bak.2'); } catch (e) {}
+  try { if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, DATA_FILE + '.bak.1'); } catch (e) {}
+
+  // Step 2 — write tmp + fsync the file
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeSync(fd, json);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  // Step 3 — atomic rename
   fs.renameSync(tmp, DATA_FILE);
+
+  // Step 4 — fsync the directory so the rename hits disk. Best-effort: not
+  // supported on Windows (EPERM on dir fsync), but production runs on Linux
+  // (Coolify/Docker), so this matters there.
+  try {
+    const dirFd = fs.openSync(DATA_DIR, 'r');
+    try { fs.fsyncSync(dirFd); }
+    finally { fs.closeSync(dirFd); }
+  } catch (e) { /* windows / non-critical */ }
+
   _dataETagCache = '"' + crypto.createHash('md5').update(json).digest('hex').slice(0, 16) + '"';
 }
 
@@ -301,30 +405,125 @@ const server = http.createServer(async (req, res) => {
       if (typeof incoming !== 'object' || !incoming.results || !incoming.schedule) {
         return json(res, 400, { error: 'invalid payload' });
       }
-      // Reject unknown keys — only canonical pairs from MATCHES_SEED are allowed.
-      // Defense in depth: even an authenticated client shouldn't be able to write
-      // junk pairs (typo, swapped order, removed player) into persistent state.
+      // Reject unknown keys — only canonical pairs derivable from the current
+      // player list are allowed. Defense in depth: even an authenticated client
+      // shouldn't be able to write junk pairs (typo, swapped order) into state.
+      // The player list itself is authoritative here — we don't trust the
+      // client to add players via a /api/data PUT (use POST /api/players).
+      const existing = readData();
+      const validKeys = buildValidKeys(existing.players);
       for (const k in incoming.results) {
-        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid result key: ' + k });
+        if (!validKeys.has(k)) return json(res, 400, { error: 'invalid result key: ' + k });
+        const r = incoming.results[k];
+        if (!Array.isArray(r) || r.length !== 2) return json(res, 400, { error: 'invalid result value for ' + k });
+        const a = clampInt(r[0], 0, 2);
+        const b = clampInt(r[1], 0, 2);
+        if (a === null || b === null) return json(res, 400, { error: 'invalid result value for ' + k });
+        if (Math.max(a, b) !== 2 || Math.min(a, b) > 1) return json(res, 400, { error: 'invalid result value for ' + k });
       }
       for (const k in incoming.schedule) {
-        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid schedule key: ' + k });
+        if (!validKeys.has(k)) return json(res, 400, { error: 'invalid schedule key: ' + k });
+        if (typeof incoming.schedule[k] !== 'string' || !incoming.schedule[k]) {
+          return json(res, 400, { error: 'invalid schedule value for ' + k });
+        }
       }
       const liveIn = incoming.live || {};
+      const sanitizedLive = {};
       for (const k in liveIn) {
-        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid live key: ' + k });
+        if (!validKeys.has(k)) return json(res, 400, { error: 'invalid live key: ' + k });
+        const v = validateLiveBody(liveIn[k]);
+        if (!v) return json(res, 400, { error: 'invalid live state for ' + k });
+        // Preserve updatedAt if client supplied it; otherwise stamp now.
+        const updatedAt = typeof liveIn[k].updatedAt === 'string' ? liveIn[k].updatedAt : new Date().toISOString();
+        sanitizedLive[k] = { ...v, updatedAt };
       }
       const recordedIn = incoming.resultsRecordedAt || {};
       for (const k in recordedIn) {
-        if (!VALID_KEYS.has(k)) return json(res, 400, { error: 'invalid resultsRecordedAt key: ' + k });
+        if (!validKeys.has(k)) return json(res, 400, { error: 'invalid resultsRecordedAt key: ' + k });
+        if (typeof recordedIn[k] !== 'string' || !recordedIn[k]) {
+          return json(res, 400, { error: 'invalid resultsRecordedAt value for ' + k });
+        }
       }
       writeData({
         results: incoming.results,
         schedule: incoming.schedule,
-        live: liveIn,
-        resultsRecordedAt: recordedIn
+        live: sanitizedLive,
+        resultsRecordedAt: recordedIn,
+        players: existing.players
       });
       return json(res, 200, { ok: true });
+    }
+
+    // POST /api/players  → append a new player. Admin-only.
+    // Body: { name: "..." }. Name is trimmed, must be non-empty and unique.
+    if (url === '/api/players' && req.method === 'POST') {
+      if (!checkAdmin(req)) return json(res, 401, { error: 'unauthorized' });
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch (e) { return json(res, 400, { error: 'invalid json' }); }
+      const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+      if (!name) return json(res, 400, { error: 'name required' });
+      if (name.length > 40) return json(res, 400, { error: 'name too long' });
+      // Match keys use "|" as separator — disallow it in player names.
+      if (name.includes('|')) return json(res, 400, { error: 'name cannot contain "|"' });
+      const data = readData();
+      if (data.players.includes(name)) return json(res, 409, { error: 'player exists' });
+      data.players = [...data.players, name];
+      writeData(data);
+      return json(res, 200, { ok: true, players: data.players });
+    }
+    if (url === '/api/players') {
+      res.writeHead(405, { 'Allow': 'POST' });
+      return res.end();
+    }
+
+    // PATCH /api/players/<oldName>  → rename a player. Admin-only.
+    // Body: { name: "newName" }. Migrates all match keys in results, schedule,
+    // live, resultsRecordedAt atomically (one writeData), then updates the
+    // players array. Re-keying preserves the player's index in the list, so
+    // canonical pair ordering "P1|P2" stays consistent.
+    // DELETE /api/players/<name>   → remove a player + all their matches.
+    const playerMatch = url.match(/^\/api\/players\/(.+)$/);
+    if (playerMatch) {
+      if (!checkAdmin(req)) return json(res, 401, { error: 'unauthorized' });
+      const oldName = decodeURIComponent(playerMatch[1]);
+
+      if (req.method === 'PATCH') {
+        const body = await readBody(req);
+        let parsed;
+        try { parsed = JSON.parse(body); }
+        catch (e) { return json(res, 400, { error: 'invalid json' }); }
+        const newName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+        if (!newName) return json(res, 400, { error: 'name required' });
+        if (newName.length > 40) return json(res, 400, { error: 'name too long' });
+        if (newName.includes('|')) return json(res, 400, { error: 'name cannot contain "|"' });
+
+        // ---- atomic critical section ----
+        const data = readData();
+        const idx = data.players.indexOf(oldName);
+        if (idx === -1) return json(res, 404, { error: 'no such player' });
+        if (newName === oldName) return json(res, 200, { ok: true, players: data.players });
+        if (data.players.includes(newName)) return json(res, 409, { error: 'name already taken' });
+
+        const migrated = migratePlayerRename(data, oldName, newName);
+        writeData(migrated);
+        return json(res, 200, { ok: true, players: migrated.players });
+      }
+
+      if (req.method === 'DELETE') {
+        // ---- atomic critical section ----
+        const data = readData();
+        const idx = data.players.indexOf(oldName);
+        if (idx === -1) return json(res, 404, { error: 'no such player' });
+        if (data.players.length <= 2) return json(res, 400, { error: 'cannot delete — at least 2 players required' });
+        const migrated = migratePlayerDelete(data, oldName);
+        writeData(migrated);
+        return json(res, 200, { ok: true, players: migrated.players });
+      }
+
+      res.writeHead(405, { 'Allow': 'PATCH, DELETE' });
+      return res.end();
     }
     if (url === '/api/data') {
       // Known path, unsupported method
@@ -338,12 +537,14 @@ const server = http.createServer(async (req, res) => {
     const liveMatch = url.match(/^\/api\/match\/(.+)\/live$/);
     if (liveMatch) {
       const key = decodeURIComponent(liveMatch[1]);
-      if (!VALID_KEYS.has(key)) return json(res, 404, { error: 'no such match' });
-
-      const data = readData();
+      const isAdmin = checkAdmin(req);
 
       if (req.method === 'DELETE') {
-        if (!checkAdmin(req)) return json(res, 401, { error: 'unauthorized' });
+        if (!isAdmin) return json(res, 401, { error: 'unauthorized' });
+        // No body to await — readData → writeData runs synchronously, so no
+        // other handler can interleave between the two and lose updates.
+        const data = readData();
+        if (!buildValidKeys(data.players).has(key)) return json(res, 404, { error: 'no such match' });
         if (data.live[key]) {
           delete data.live[key];
           writeData(data);
@@ -355,9 +556,21 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(405); return res.end();
       }
 
-      const isAdmin = checkAdmin(req);
-      if (data.results[key]) return json(res, 409, { error: 'match already finished' });
+      // Await body BEFORE readData. Node is single-threaded, so as long as
+      // there are no awaits between readData and writeData, the critical
+      // section is atomic — no other handler can read+write in between and
+      // cause a lost-update race.
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch (e) { return json(res, 400, { error: 'invalid json' }); }
+      const v = validateLiveBody(parsed);
+      if (!v) return json(res, 400, { error: 'invalid live state' });
 
+      // ---- atomic critical section (no awaits below) ----
+      const data = readData();
+      if (!buildValidKeys(data.players).has(key)) return json(res, 404, { error: 'no such match' });
+      if (data.results[key]) return json(res, 409, { error: 'match already finished' });
       if (!isAdmin) {
         const sched = data.schedule[key];
         if (!sched) return json(res, 403, { error: 'match not scheduled' });
@@ -366,22 +579,15 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const body = await readBody(req);
-      let parsed;
-      try { parsed = JSON.parse(body); }
-      catch (e) { return json(res, 400, { error: 'invalid json' }); }
-      const v = validateLiveBody(parsed);
-      if (!v) return json(res, 400, { error: 'invalid live state' });
-
       // Auto-finalize if either player has won 2 sets
       let setsA = 0, setsB = 0;
       for (const [a, b] of v.sets) {
         if (a > b) setsA++;
         else if (b > a) setsB++;
       }
-      // If state is fully empty (everything undone back to zero), don't keep
-      // a live entry — the match returns to "scheduled" until it actually
-      // starts again with a real point.
+      // Fully-empty state means user undid everything back to zero — drop the
+      // live entry so the match returns to "scheduled" until a real point
+      // gets recorded again.
       const isEmpty = v.sets.length === 0 && v.cur[0] === 0 && v.cur[1] === 0 && !v.tb;
       let finalized = false;
       let cleared = false;
@@ -415,19 +621,9 @@ const server = http.createServer(async (req, res) => {
     if (resultMatch) {
       if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
       const key = decodeURIComponent(resultMatch[1]);
-      if (!VALID_KEYS.has(key)) return json(res, 404, { error: 'no such match' });
-
-      const data = readData();
       const isAdmin = checkAdmin(req);
 
-      if (!isAdmin) {
-        const sched = data.schedule[key];
-        if (!sched) return json(res, 403, { error: 'match not scheduled' });
-        if (sched.slice(0, 10) !== todayLocalISO()) {
-          return json(res, 403, { error: 'not match day' });
-        }
-      }
-
+      // Body first → critical section atomic (no awaits between read/write).
       const body = await readBody(req);
       let parsed;
       try { parsed = JSON.parse(body); }
@@ -435,10 +631,19 @@ const server = http.createServer(async (req, res) => {
       const s1 = clampInt(parsed && parsed.s1, 0, 2);
       const s2 = clampInt(parsed && parsed.s2, 0, 2);
       if (s1 === null || s2 === null) return json(res, 400, { error: 'invalid score' });
-      // Best-of-3: winner reaches 2, loser ≤ 1
       const max = Math.max(s1, s2), min = Math.min(s1, s2);
       if (max !== 2 || min > 1) return json(res, 400, { error: 'invalid score' });
 
+      // ---- atomic critical section ----
+      const data = readData();
+      if (!buildValidKeys(data.players).has(key)) return json(res, 404, { error: 'no such match' });
+      if (!isAdmin) {
+        const sched = data.schedule[key];
+        if (!sched) return json(res, 403, { error: 'match not scheduled' });
+        if (sched.slice(0, 10) !== todayLocalISO()) {
+          return json(res, 403, { error: 'not match day' });
+        }
+      }
       data.results[key] = [s1, s2];
       data.resultsRecordedAt[key] = new Date().toISOString();
       if (data.schedule[key]) delete data.schedule[key];
@@ -467,10 +672,34 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res, url);
   } catch (e) {
     console.error('[err]', e);
+    if (e.code === 'EBADJSON') {
+      // Data file is corrupt. Refusing to write would lose all current state;
+      // return 503 so the client knows to retry or operator can recover from
+      // .bak.1/.bak.2/.bak.3 manually.
+      return json(res, 503, { error: 'data file corrupt — recover from backup' });
+    }
     json(res, 500, { error: e.message });
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`[ready] Тенис Лига Велинград on :${PORT} (data: ${DATA_FILE})`);
-});
+// Only listen when invoked directly (e.g. `node server.js`). When required
+// from a test file, callers get the helpers without a port being bound.
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`[ready] Тенис Лига Велинград on :${PORT} (data: ${DATA_FILE})`);
+  });
+}
+
+module.exports = {
+  // Pure helpers
+  buildValidKeys,
+  clampInt,
+  validateLiveBody,
+  migratePlayerRename,
+  migratePlayerDelete,
+  // IO (use with a tmp DATA_DIR for tests)
+  readData,
+  writeData,
+  // Wired-up server (for integration smoke tests)
+  server
+};

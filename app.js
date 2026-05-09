@@ -2,6 +2,11 @@ document.addEventListener('alpine:init', () => {
   Alpine.data('tennisApp', () => ({
     // ======= STATE =======
     view: 'standings',
+    // Player roster — bootstrapped from data.js PLAYERS, then overwritten by
+    // server data.players on first /api/data fetch. Admin can append via
+    // POST /api/players (addPlayer action). Adding a player auto-expands the
+    // round-robin: recomputeDerived generates pair combinations from this list.
+    players: PLAYERS.slice(),
     results: {},
     schedule: {},
     live: {},
@@ -18,6 +23,11 @@ document.addEventListener('alpine:init', () => {
 
     passwordInput: '',
     passwordError: '',
+
+    // Admin: players management
+    newPlayerName: '',
+    addPlayerError: '',
+    playersExpanded: false,
 
     scoreMatch: null,
     scheduleMatch: null,
@@ -91,11 +101,16 @@ document.addEventListener('alpine:init', () => {
       await this.load();
       this.recomputeDerived();
 
-      // Auto-restore admin auth from localStorage (admin device only)
+      // Auto-restore admin auth from localStorage (admin device only).
+      // If the server is reachable and confirms 401 ⇒ wipe (stale password).
+      // If verification fails for any other reason (network blip, cold-start),
+      // optimistically grant admin: subsequent admin requests will get 401s
+      // if the password really is invalid, and onAdminUnauthorized() handles
+      // that. Refusing here would log the admin out on every transient blip.
       const savedPass = localStorage.getItem('tennis-admin-pw');
       if (savedPass && this.backendMode === 'api') {
-        const ok = await this.verifyApiPassword(savedPass);
-        if (ok) {
+        const result = await this.verifyApiPassword(savedPass);
+        if (result === 'ok' || result === 'error') {
           this._adminPassword = savedPass;
           this.isAdmin = true;
         } else {
@@ -106,6 +121,10 @@ document.addEventListener('alpine:init', () => {
       // Persist + recompute on changes
       this.$watch('results', () => { this.recomputeDerived(); this.persist(); });
       this.$watch('schedule', () => { this.recomputeDerived(); this.persist(); });
+      // Players list: server is the source of truth; client mutations come
+      // through addPlayer (POST /api/players). Recompute matches/standings
+      // when the list changes (e.g. a poll picked up a new addition).
+      this.$watch('players', () => this.recomputeDerived());
       // Live state: localStorage only (server is updated via dedicated endpoint).
       // Without this, refreshing in local mode loses any in-progress live score.
       this.$watch('live', () => this.persistLocal());
@@ -139,25 +158,33 @@ document.addEventListener('alpine:init', () => {
     },
 
     recomputeDerived() {
-      // Build matches array
-      const matches = MATCHES_SEED.map((m, i) => {
-        const key = m[0] + '|' + m[1];
-        const r = this.results[key];
-        const sched = this.schedule[key];
-        let s1 = null, s2 = null, played = false, winner = null, loser = null;
-        if (r) {
-          s1 = r[0]; s2 = r[1];
-          played = true;
-          if (s1 > s2) { winner = m[0]; loser = m[1]; }
-          else { winner = m[1]; loser = m[0]; }
+      // Build matches array as the round-robin combinations of the current
+      // player list. Adding a player to `this.players` automatically appends
+      // their new pairings to the end (preserving num for existing matches).
+      const players = this.players;
+      const matches = [];
+      let num = 0;
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          const p1 = players[i], p2 = players[j];
+          const key = p1 + '|' + p2;
+          const r = this.results[key];
+          const sched = this.schedule[key];
+          let s1 = null, s2 = null, played = false, winner = null, loser = null;
+          if (r) {
+            s1 = r[0]; s2 = r[1];
+            played = true;
+            if (s1 > s2) { winner = p1; loser = p2; }
+            else { winner = p2; loser = p1; }
+          }
+          num++;
+          matches.push({
+            num, key, p1, p2,
+            s1, s2, played, winner, loser,
+            scheduledAt: sched || null
+          });
         }
-        return {
-          num: i + 1, key,
-          p1: m[0], p2: m[1],
-          s1, s2, played, winner, loser,
-          scheduledAt: sched || null
-        };
-      });
+      }
 
       // Lookup map for O(1) matchBetween
       const byPair = {};
@@ -192,7 +219,7 @@ document.addEventListener('alpine:init', () => {
 
       // Standings
       const stats = {};
-      PLAYERS.forEach(p => stats[p] = {
+      this.players.forEach(p => stats[p] = {
         name: p, played: 0, wins: 0, losses: 0,
         setsWon: 0, setsLost: 0, points: 0
       });
@@ -246,6 +273,7 @@ document.addEventListener('alpine:init', () => {
             this.schedule = data.schedule || {};
             this.live = data.live || {};
             this.resultsRecordedAt = data.resultsRecordedAt || {};
+            if (Array.isArray(data.players) && data.players.length) this.players = data.players;
 
             // Recover live state where local is newer than server's
             // (e.g. user added a game but POST didn't reach server before refresh)
@@ -264,6 +292,7 @@ document.addEventListener('alpine:init', () => {
           this.schedule = data.schedule || {};
           this.live = data.live || {};
           this.resultsRecordedAt = data.resultsRecordedAt || {};
+          if (Array.isArray(data.players) && data.players.length) this.players = data.players;
           this.passwordHash = data.passwordHash || null;
           return;
         }
@@ -282,6 +311,7 @@ document.addEventListener('alpine:init', () => {
 
     persistLocal() {
       localStorage.setItem('tennis-v1', JSON.stringify({
+        players: this.players,
         results: this.results,
         schedule: this.schedule,
         live: this.live,
@@ -311,6 +341,7 @@ document.addEventListener('alpine:init', () => {
             resultsRecordedAt: this.resultsRecordedAt
           })
         });
+        if (r.status === 401) { this._handleAdminUnauthorized(); throw new Error('unauthorized'); }
         if (!r.ok) throw new Error('save failed: ' + r.status);
         // Update our ETag so the next poll won't think this is "new"
         const etag = r.headers.get('etag');
@@ -427,6 +458,7 @@ document.addEventListener('alpine:init', () => {
         }
 
         this._fromServer = true;
+        if (Array.isArray(data.players) && data.players.length) this.players = data.players;
         this.results = mergedResults;
         this.schedule = data.schedule || {};
         this.live = mergedLive;
@@ -459,6 +491,10 @@ document.addEventListener('alpine:init', () => {
       this._toastTimer = setTimeout(() => { this.toast = ''; }, 3000);
     },
 
+    // Returns 'ok' | 'wrong' | 'error'.
+    // Distinguishes "password is wrong" (server said 401) from "server didn't
+    // answer" (network blip, cold-start) so the caller can decide whether to
+    // wipe a saved password — we only want to wipe on a confirmed wrong.
     async verifyApiPassword(password) {
       try {
         const r = await fetch(this.apiBase + '/auth', {
@@ -466,14 +502,15 @@ document.addEventListener('alpine:init', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        return r.ok;
+        if (r.ok) return 'ok';
+        if (r.status === 401) return 'wrong';
+        return 'error';
       } catch (e) {
-        return false;
+        return 'error';
       }
     },
 
     // ======= COMPUTED =======
-    get players() { return PLAYERS; },
 
     get filteredMatches() {
       const q = this.matchSearch.trim().toLowerCase();
@@ -557,13 +594,13 @@ document.addEventListener('alpine:init', () => {
       // their card while the first has 19 (and everyone in between
       // monotonically less). Push to both groups for symmetry.
       const groups = {};
-      PLAYERS.forEach(p => groups[p] = []);
+      this.players.forEach(p => groups[p] = []);
       this.matches.forEach(m => {
         if (!matchPasses(m)) return;
         groups[m.p1].push(m);
         groups[m.p2].push(m);
       });
-      return PLAYERS
+      return this.players
         .filter(p => groups[p].length > 0)
         .map(p => ({ player: p, matches: groups[p], isFiltered: false }));
     },
@@ -655,7 +692,7 @@ document.addEventListener('alpine:init', () => {
 
     duelOpponents(p) {
       // Sort: played wins first, then losses, then scheduled, then pending
-      return PLAYERS
+      return this.players
         .filter(x => x !== p)
         .sort((a, b) => {
           const ma = this.matchBetween(p, a);
@@ -697,6 +734,169 @@ document.addEventListener('alpine:init', () => {
     },
 
     // ======= ADMIN ACTIONS =======
+    // Append a new player to the roster. Admin-only.
+    // - api mode: POST /api/players, server appends + persists, returns full
+    //   list. Client takes the response as authoritative.
+    // - local mode: just append locally; persistLocal will pick it up via the
+    //   players watcher (no server to talk to).
+    async addPlayer(rawName) {
+      const name = (rawName || '').trim();
+      if (!name) return { ok: false, error: 'Името е задължително' };
+      if (name.length > 40) return { ok: false, error: 'Името е твърде дълго' };
+      if (name.includes('|')) return { ok: false, error: 'Името не може да съдържа "|"' };
+      if (this.players.includes(name)) return { ok: false, error: 'Играчът вече съществува' };
+
+      if (this.backendMode === 'api') {
+        if (!this._adminPassword) return { ok: false, error: 'Необходима е админ парола' };
+        try {
+          const r = await fetch(this.apiBase + '/players', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Password': this._adminPassword },
+            body: JSON.stringify({ name })
+          });
+          const data = await r.json().catch(() => ({}));
+          if (r.status === 401) { this._handleAdminUnauthorized(); return { ok: false, error: 'Сесията изтече' }; }
+          if (!r.ok) return { ok: false, error: data.error || 'Грешка при запис' };
+          this.players = data.players;
+          this.showToast('✓ Добавен: ' + name);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: 'Мрежова грешка' };
+        }
+      }
+      // local mode
+      this.players = [...this.players, name];
+      this.persistLocal();
+      this.showToast('✓ Добавен: ' + name);
+      return { ok: true };
+    },
+
+    // Rename a player. Admin-only. Server migrates all match keys atomically.
+    async renamePlayer(oldName, rawNew) {
+      const newName = (rawNew || '').trim();
+      if (!newName) return { ok: false, error: 'Името е задължително' };
+      if (newName.length > 40) return { ok: false, error: 'Името е твърде дълго' };
+      if (newName.includes('|')) return { ok: false, error: 'Името не може да съдържа "|"' };
+      if (newName === oldName) return { ok: true };
+      if (this.players.includes(newName)) return { ok: false, error: 'Име вече съществува' };
+
+      if (this.backendMode === 'api') {
+        if (!this._adminPassword) return { ok: false, error: 'Необходима е админ парола' };
+        try {
+          const r = await fetch(this.apiBase + '/players/' + encodeURIComponent(oldName), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Password': this._adminPassword },
+            body: JSON.stringify({ name: newName })
+          });
+          const data = await r.json().catch(() => ({}));
+          if (r.status === 401) { this._handleAdminUnauthorized(); return { ok: false, error: 'Сесията изтече' }; }
+          if (!r.ok) return { ok: false, error: data.error || 'Грешка при запис' };
+          // Server migrated keys; pull fresh state so client mirrors it
+          // exactly rather than re-doing the migration locally.
+          await this._refetchAll();
+          this.showToast('✓ Преименуван: ' + newName);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: 'Мрежова грешка' };
+        }
+      }
+
+      // Local mode: do the same migration in-memory.
+      this._renamePlayerLocal(oldName, newName);
+      this.showToast('✓ Преименуван: ' + newName);
+      return { ok: true };
+    },
+
+    _renamePlayerLocal(oldName, newName) {
+      const renameKey = (k) => {
+        const [a, b] = k.split('|');
+        if (a === oldName) return newName + '|' + b;
+        if (b === oldName) return a + '|' + newName;
+        return k;
+      };
+      const remap = (obj) => {
+        const out = {};
+        for (const k in obj) out[renameKey(k)] = obj[k];
+        return out;
+      };
+      this._fromServer = true;  // suppress the persist watcher; we'll persist explicitly
+      this.players = this.players.map(p => p === oldName ? newName : p);
+      this.results = remap(this.results);
+      this.schedule = remap(this.schedule);
+      this.live = remap(this.live);
+      this.resultsRecordedAt = remap(this.resultsRecordedAt);
+      this.persistLocal();
+      Promise.resolve().then(() => { this._fromServer = false; });
+    },
+
+    // Delete a player + all matches involving them. Admin-only. Lossy.
+    async deletePlayer(name) {
+      if (this.players.length <= 2) return { ok: false, error: 'Трябват поне 2 играчи' };
+      if (!this.players.includes(name)) return { ok: false, error: 'Няма такъв играч' };
+
+      if (this.backendMode === 'api') {
+        if (!this._adminPassword) return { ok: false, error: 'Необходима е админ парола' };
+        try {
+          const r = await fetch(this.apiBase + '/players/' + encodeURIComponent(name), {
+            method: 'DELETE',
+            headers: { 'X-Admin-Password': this._adminPassword }
+          });
+          const data = await r.json().catch(() => ({}));
+          if (r.status === 401) { this._handleAdminUnauthorized(); return { ok: false, error: 'Сесията изтече' }; }
+          if (!r.ok) return { ok: false, error: data.error || 'Грешка при запис' };
+          await this._refetchAll();
+          this.showToast('✓ Изтрит: ' + name);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: 'Мрежова грешка' };
+        }
+      }
+
+      // Local mode
+      this._deletePlayerLocal(name);
+      this.showToast('✓ Изтрит: ' + name);
+      return { ok: true };
+    },
+
+    _deletePlayerLocal(name) {
+      const involves = (k) => {
+        const [a, b] = k.split('|');
+        return a === name || b === name;
+      };
+      const filterKeys = (obj) => {
+        const out = {};
+        for (const k in obj) if (!involves(k)) out[k] = obj[k];
+        return out;
+      };
+      this._fromServer = true;
+      this.players = this.players.filter(p => p !== name);
+      this.results = filterKeys(this.results);
+      this.schedule = filterKeys(this.schedule);
+      this.live = filterKeys(this.live);
+      this.resultsRecordedAt = filterKeys(this.resultsRecordedAt);
+      this.persistLocal();
+      Promise.resolve().then(() => { this._fromServer = false; });
+    },
+
+    // After a server-side mutation that rewrote keys (rename/delete), pull
+    // the canonical state so the client doesn't re-do migration logic and
+    // risk drift. Sets _fromServer so the watcher doesn't persist back.
+    async _refetchAll() {
+      try {
+        const r = await fetch(this.apiBase + '/data', { cache: 'no-store' });
+        if (!r.ok) return;
+        this._dataETag = r.headers.get('etag');
+        const data = await r.json();
+        this._fromServer = true;
+        if (Array.isArray(data.players) && data.players.length) this.players = data.players;
+        this.results = data.results || {};
+        this.schedule = data.schedule || {};
+        this.live = data.live || {};
+        this.resultsRecordedAt = data.resultsRecordedAt || {};
+        Promise.resolve().then(() => { this._fromServer = false; });
+      } catch (e) {}
+    },
+
     setResult(match, s1, s2) {
       const newResults = { ...this.results };
       newResults[match.key] = [s1, s2];
@@ -830,7 +1030,7 @@ document.addEventListener('alpine:init', () => {
     get wizardOpponents() {
       const a = this.wizard.playerA;
       if (!a) return [];
-      return PLAYERS
+      return this.players
         .filter(p => p !== a)
         .map(p => {
           const m = this.matchBetween(a, p);
@@ -974,7 +1174,20 @@ document.addEventListener('alpine:init', () => {
         .map(b => b.toString(16).padStart(2, '0')).join('');
     },
 
-    async submitPassword() {
+    // Ask the browser's password manager to offer to save credentials.
+    // Uses the Credential Management API (Chromium + recent Safari/Firefox).
+    // SPAs need this because @submit.prevent blocks the form submission and
+    // browsers' "user just logged in" heuristics never trigger otherwise.
+    // Wrapped — never let a credential-store hiccup break login.
+    async _offerSaveCredential(formEl) {
+      try {
+        if (typeof PasswordCredential !== 'function' || !formEl) return;
+        const cred = new PasswordCredential(formEl);
+        await navigator.credentials.store(cred);
+      } catch (e) { /* user dismissed, browser unsupported, or insecure context */ }
+    },
+
+    async submitPassword(formEl) {
       this.passwordError = '';
       if (!this.passwordInput || this.passwordInput.length < 4) {
         this.passwordError = 'Минимум 4 символа';
@@ -983,13 +1196,20 @@ document.addEventListener('alpine:init', () => {
 
       // API mode — verify against server
       if (this.backendMode === 'api') {
-        const ok = await this.verifyApiPassword(this.passwordInput);
-        if (!ok) {
+        const result = await this.verifyApiPassword(this.passwordInput);
+        if (result === 'wrong') {
           this.passwordError = 'Грешна парола';
+          return;
+        }
+        if (result === 'error') {
+          this.passwordError = 'Сървърът не отговаря — опитай пак';
           return;
         }
         this._adminPassword = this.passwordInput;
         localStorage.setItem('tennis-admin-pw', this.passwordInput);
+        // Trigger the browser save prompt BEFORE we clear the input or hide
+        // the form (Alpine's x-if removes the DOM and would defeat the API).
+        await this._offerSaveCredential(formEl);
         this.isAdmin = true;
         this.passwordInput = '';
         return;
@@ -999,8 +1219,10 @@ document.addEventListener('alpine:init', () => {
       const hash = await this.hashPassword(this.passwordInput);
       if (!this.passwordHash) {
         this.passwordHash = hash;
+        await this._offerSaveCredential(formEl);
         this.isAdmin = true;
       } else if (this.passwordHash === hash) {
+        await this._offerSaveCredential(formEl);
         this.isAdmin = true;
       } else {
         this.passwordError = 'Грешна парола';
@@ -1013,6 +1235,40 @@ document.addEventListener('alpine:init', () => {
       this.isAdmin = false;
       this._adminPassword = null;
       localStorage.removeItem('tennis-admin-pw');
+    },
+
+    // Force a clean reload: unregister service workers, drop every Cache
+    // Storage entry, then reload. Use when a user is stuck on a stale shell
+    // and the SW's normal update cycle hasn't kicked in.
+    // Preserves localStorage (admin password, persisted state) — only the
+    // HTTP/SW cache layer is wiped.
+    async hardRefresh() {
+      if (!confirm('Изчисти кеша и презареди приложението?')) return;
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        }
+      } catch (e) { /* best effort — proceed to reload regardless */ }
+      // Bypass HTTP cache too. Adding a cache-buster query forces a fresh
+      // fetch of index.html even if browsers ignore reload(true).
+      const sep = window.location.search ? '&' : '?';
+      window.location.replace(window.location.pathname + window.location.search + sep + '_t=' + Date.now() + window.location.hash);
+    },
+
+    // Called when an admin-only request gets a 401 — the password we have is
+    // stale (changed on the server, or we restored a junk one). Wipe and
+    // prompt re-login. Toast is visible and non-blocking so the user knows.
+    _handleAdminUnauthorized() {
+      if (!this.isAdmin) return;
+      this.isAdmin = false;
+      this._adminPassword = null;
+      localStorage.removeItem('tennis-admin-pw');
+      this.showToast('⚠️ Сесията изтече — влез отново');
     },
 
     // ======= HELPERS =======
@@ -1642,6 +1898,7 @@ document.addEventListener('alpine:init', () => {
     // ======= EXPORT / IMPORT =======
     exportData() {
       const data = JSON.stringify({
+        players: this.players,
         results: this.results,
         schedule: this.schedule,
         live: this.live,
@@ -1666,6 +1923,7 @@ document.addEventListener('alpine:init', () => {
           const data = JSON.parse(e.target.result);
           if (!data.results) throw new Error('Невалиден файл');
           if (!confirm('Това ще замени текущите данни. Продължи?')) return;
+          if (Array.isArray(data.players) && data.players.length) this.players = data.players;
           this.results = data.results;
           this.schedule = data.schedule || {};
           this.live = data.live || {};

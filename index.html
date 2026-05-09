@@ -633,8 +633,20 @@
           <div class="lock-icon">🔒</div>
           <h2 x-text="needsPasswordSetup ? 'Първоначално настройване' : 'Заключено'"></h2>
           <p x-text="needsPasswordSetup ? 'Задай нова парола за админ достъп' : 'Въведи администраторска парола'"></p>
-          <form @submit.prevent="submitPassword()" class="login-form">
-            <input type="password" x-model="passwordInput" placeholder="Парола" autocomplete="current-password" required />
+          <form @submit.prevent="submitPassword($el)" class="login-form" method="post" action="#">
+            <!-- Hidden username field — password managers (Chrome, Safari, 1Password)
+                 typically refuse to save credentials without an associated username.
+                 We have a single shared admin so the value is constant. -->
+            <input type="text" name="username" value="admin" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true" readonly />
+            <input
+              type="password"
+              name="password"
+              id="admin-password"
+              x-model="passwordInput"
+              placeholder="Парола"
+              :autocomplete="needsPasswordSetup ? 'new-password' : 'current-password'"
+              required
+            />
             <button type="submit" class="btn-primary full" x-text="needsPasswordSetup ? 'Задай парола' : 'Влез'"></button>
             <p class="error" x-show="passwordError" x-text="passwordError"></p>
           </form>
@@ -657,6 +669,7 @@
               </p>
             </div>
             <div class="admin-tools">
+              <button class="btn-icon" @click="hardRefresh()" title="Презареди — изчиства SW кеша и взима последна версия">↻</button>
               <button class="btn-icon" @click="exportData()" title="Експорт">⬇</button>
               <label class="btn-icon" title="Импорт">
                 ⬆<input type="file" accept=".json,application/json" @change="importData($event)" hidden />
@@ -683,6 +696,50 @@
               </span>
               <span class="quick-arrow">→</span>
             </button>
+          </div>
+
+          <!-- Players management: add / rename / delete -->
+          <div class="players-admin">
+            <div class="add-player-head">
+              <span class="add-player-icon">👤</span>
+              <strong>Играчи</strong>
+              <button type="button" class="players-toggle" @click="playersExpanded = !playersExpanded">
+                <span x-text="players.length"></span>
+                <span x-text="playersExpanded ? '▾' : '▸'"></span>
+              </button>
+            </div>
+
+            <form class="add-player-row" @submit.prevent="
+              const res = await addPlayer(newPlayerName);
+              if (res.ok) { newPlayerName = ''; addPlayerError = ''; }
+              else addPlayerError = res.error;
+            ">
+              <input type="text" x-model="newPlayerName" placeholder="Ново име" maxlength="40" required />
+              <button type="submit" class="btn-primary">+ Добави</button>
+            </form>
+            <p class="add-player-error" x-show="addPlayerError" x-text="addPlayerError"></p>
+
+            <div class="players-list" x-show="playersExpanded" x-transition>
+              <template x-for="p in players" :key="p">
+                <div class="players-list-row">
+                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(p)}`"></span>
+                  <span class="players-list-name" x-text="p"></span>
+                  <button type="button" class="btn-mini" @click="
+                    const newName = prompt('Ново име за ' + p, p);
+                    if (newName && newName.trim() && newName.trim() !== p) {
+                      const res = await renamePlayer(p, newName);
+                      if (!res.ok) alert('Грешка: ' + res.error);
+                    }
+                  " title="Преименуване">✎</button>
+                  <button type="button" class="btn-mini btn-danger" @click="
+                    if (confirm('Изтрий ' + p + '? Всички мачове и резултати на този играч ще бъдат премахнати завинаги.')) {
+                      const res = await deletePlayer(p);
+                      if (!res.ok) alert('Грешка: ' + res.error);
+                    }
+                  " title="Изтрий">🗑</button>
+                </div>
+              </template>
+            </div>
           </div>
 
           <div class="admin-toolbar">

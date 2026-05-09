@@ -56,11 +56,12 @@ COPY manifest.webmanifest og.png og.svg favicon.svg apple-touch-icon.png ./publi
 
 ### 4. Did I add a new API endpoint? → check key validation
 
-All match-key-bearing endpoints **must** validate against `VALID_KEYS` (server.js). The whitelist is built from `MATCHES_SEED`. Existing endpoints that do this:
+All match-key-bearing endpoints **must** validate against `buildValidKeys(data.players)` (server.js). The whitelist is derived dynamically from the current player roster. Existing endpoints that do this:
 - `POST /api/match/<key>/live`
 - `DELETE /api/match/<key>/live`
 - `POST /api/match/<key>/result`
-- `PUT /api/data` (validates all keys in `results`/`schedule`/`live`)
+- `PUT /api/data` (validates all keys in `results`/`schedule`/`live`/`resultsRecordedAt`)
+- `POST /api/players` (admin-only, name validation: non-empty, ≤40 chars, no `|`, unique)
 
 ### 5. Did I change persisted data shape? → migration consideration
 
@@ -78,7 +79,8 @@ Both auto-clean `schedule[key]` and `live[key]` on finalize. If you add a third 
 
 - **Single Alpine component** `tennisApp` in `app.js` — all state and methods live here.
 - **Derived state** (`matches`, `standings`, etc.) is recomputed via `recomputeDerived()` triggered by `$watch('results')` and `$watch('schedule')`. Don't add getters that iterate over all matches — use derived state.
-- **Canonical pair keys**: `"P1|P2"` where P1 comes before P2 in `PLAYERS`. Build keys from `match.key` (which comes from `MATCHES_SEED`), never from raw user input.
+- **Player roster lives in `/data/tennis.json`** (`data.players` field). `data.js`'s `PLAYERS` array is only a bootstrap default used when the data file has no `players` field yet. The admin "Add player" UI POSTs to `/api/players`; the server is authoritative. `MATCHES_SEED` in `data.js` is similarly bootstrap-only — match pairs are generated dynamically from `this.players` in `recomputeDerived`.
+- **Canonical pair keys**: `"P1|P2"` where P1 comes before P2 in the player list. Build keys from `match.key`, never from raw user input. Server validates incoming keys against `buildValidKeys(data.players)` on every write.
 - **Mutation must reassign**: Alpine watchers fire on reassignment, not mutation. Use `this.results = { ...this.results, [key]: ... }`, not `this.results[key] = ...`.
 - **Anti-loop flag**: `_fromServer = true` before applying server data, cleared in microtask. `persist()` bails if set.
 - **Two-mode backend**: `backendMode = 'api'` (server) or `'local'` (localStorage). Detected at boot via `/api/health`. Same code runs in both.
@@ -101,7 +103,28 @@ $env:DATA_DIR = "./data"   # avoid trying to create /data on Windows
 node server.js
 ```
 
+## Tests
+
+Pure server helpers are unit-tested with Node's built-in `node:test` (no npm deps). Run from project root:
+
+```powershell
+npm test          # or: node --test test/server.test.js
+```
+
+Coverage: `buildValidKeys`, `clampInt`, `validateLiveBody`, `migratePlayerRename`, `migratePlayerDelete`, `readData`/`writeData` round-trips, backup rotation, EBADJSON behavior. HTTP handlers are not directly tested — they're thin glue around the pure helpers, with the atomicity guarantee ("no awaits between readData and writeData") verified by code review.
+
+When adding a new pure helper or migration function, add a test alongside it. When adding a handler that does a read-modify-write, audit it for the same atomicity invariant.
+
 Note: server reads from `public/` by default. The Dockerfile builds that layout. For local dev that needs the static frontend (not just API), either copy files to `./public/` or open `index.html` directly via `file://` (frontend auto-detects and falls back to localStorage mode).
+
+## Real data — no silent migrations or backfills
+
+There is **one** data file: `/data/tennis.json` on the production server. It is real, live data — not a fixture. Treat it accordingly:
+
+- **Never auto-mutate persisted user data on load.** No init-time backfills, no "fix-up" passes, no rewriting of `resultsRecordedAt`, `results`, `schedule`, `live`, or any other field as a side effect of opening the page. A getter that reshapes data for display is fine; a side effect that calls `persist()` / `persistLocal()` to write derived guesses back is not.
+- **Don't fabricate timestamps.** If a record is missing `recordedAt`, the honest UI is "no date" — not `new Date().toISOString()`. We learned this the hard way: a backfill stamped two yesterday-entered results with today's ISO and the originals are unrecoverable.
+- **Migrations require explicit ask.** If schema changes truly demand reshaping existing data, propose it to the user first with a clear before/after and a backup plan. Do not ship migration logic that runs implicitly.
+- **Reads are free, writes are not.** Computing a different view of the data in a getter (filter, group, sort, label) is always preferred over rewriting the underlying state.
 
 ## When in doubt
 

@@ -1,0 +1,14 @@
+{
+  "name": "tennis-velingrad",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Тенис Лига Велинград — single-page round-robin tracker. Server: Node built-ins only, JSON-file storage.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/server.test.js test/integration.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
