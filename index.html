@@ -231,7 +231,7 @@
                 <span class="rr-name" x-text="r.match.p2"></span>
                 <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p2)}`" x-text="initials(r.match.p2)"></span>
               </div>
-              <div class="rr-time" x-text="timeFromNow(r.recordedAt)"></div>
+              <div class="rr-time" x-text="r.recordedAt ? timeFromNow(r.recordedAt) : ''"></div>
             </div>
           </template>
         </div>
@@ -309,27 +309,21 @@
         <h2>Предстоящи</h2>
         <p>Планирани мачове по дата</p>
       </div>
-      <template x-if="scheduledMatches.length === 0">
+      <template x-if="activeScheduledMatches.length === 0">
         <div class="empty-state">
           <div class="empty-icon">📅</div>
           <h3>Няма планирани мачове</h3>
           <p>Админът може да планира мачове от админ панела.</p>
         </div>
       </template>
-      <template x-for="grp in [
-        { key: 'today', label: '📅 Днес', items: groupedScheduledMatches.today },
-        { key: 'thisWeek', label: '🗓 Тази седмица', items: groupedScheduledMatches.thisWeek },
-        { key: 'later', label: '⏭ Следващи седмици', items: groupedScheduledMatches.later }
-      ]" :key="grp.key">
-        <div class="upcoming-group" x-show="grp.items.length > 0">
-          <h3 class="upcoming-group-head" x-text="grp.label"></h3>
+      <template x-if="groupedScheduledMatches.today.length > 0">
+        <div class="upcoming-group">
+          <h3 class="upcoming-group-head">📅 Днес</h3>
           <div class="upcoming-list">
-            <template x-for="m in grp.items" :key="m.key">
+            <template x-for="m in groupedScheduledMatches.today" :key="m.key">
               <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
                 <div class="upcoming-date-row">
-                  <div class="upcoming-date">
-                    <span x-text="formatDateLong(m.scheduledAt)"></span>
-                  </div>
+                  <div class="upcoming-date"><span x-text="formatDateLong(m.scheduledAt)"></span></div>
                   <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
                 </div>
                 <div class="upcoming-vs">
@@ -357,6 +351,66 @@
                     <button class="btn-final" @click="openScore(m)">🏁 Краен резултат</button>
                   </div>
                 </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="groupedScheduledMatches.thisWeek.length > 0">
+        <div class="upcoming-group">
+          <h3 class="upcoming-group-head">🗓 Тази седмица</h3>
+          <div class="upcoming-list">
+            <template x-for="m in groupedScheduledMatches.thisWeek" :key="m.key">
+              <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
+                <div class="upcoming-date-row">
+                  <div class="upcoming-date"><span x-text="formatDateLong(m.scheduledAt)"></span></div>
+                  <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
+                </div>
+                <div class="upcoming-vs">
+                  <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
+                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                    <span class="upcoming-name" x-text="m.p1"></span>
+                  </div>
+                  <div class="upcoming-vs-sep">VS</div>
+                  <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
+                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                    <span class="upcoming-name" x-text="m.p2"></span>
+                  </div>
+                </div>
+                <template x-if="canWriteToday(m) && !isMatchLive(m)">
+                  <div class="today-actions">
+                    <button class="btn-live" @click="openLive(m)">🔴 На живо</button>
+                    <button class="btn-final" @click="openScore(m)">🏁 Краен резултат</button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="groupedScheduledMatches.later.length > 0">
+        <div class="upcoming-group">
+          <h3 class="upcoming-group-head">⏭ Следващи седмици</h3>
+          <div class="upcoming-list">
+            <template x-for="m in groupedScheduledMatches.later" :key="m.key">
+              <div class="upcoming-card">
+                <div class="upcoming-date-row">
+                  <div class="upcoming-date"><span x-text="formatDateLong(m.scheduledAt)"></span></div>
+                  <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
+                </div>
+                <div class="upcoming-vs">
+                  <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
+                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
+                    <span class="upcoming-name" x-text="m.p1"></span>
+                  </div>
+                  <div class="upcoming-vs-sep">VS</div>
+                  <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
+                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
+                    <span class="upcoming-name" x-text="m.p2"></span>
+                  </div>
+                </div>
               </div>
             </template>
           </div>
@@ -423,7 +477,7 @@
             <template x-for="m in g.matches" :key="m.key">
               <div class="match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
                 <div class="match-top">
-                  <span class="match-num">#<span x-text="m.num"></span></span>
+                  <span class="match-num" x-show="m.playNum">#<span x-text="m.playNum"></span></span>
                   <template x-if="isMatchLive(m)">
                     <span class="match-status live"><span class="live-dot"></span> LIVE <span x-text="formatLiveScore(m)"></span></span>
                   </template>
@@ -646,7 +700,7 @@
               <div class="admin-match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
                 <div class="admin-match-info">
                   <div class="admin-match-top">
-                    <span class="match-num">#<span x-text="m.num"></span></span>
+                    <span class="match-num" x-show="m.playNum">#<span x-text="m.playNum"></span></span>
                     <template x-if="isMatchLive(m)">
                       <span class="match-status live"><span class="live-dot"></span> LIVE <span x-text="formatLiveScore(m)"></span></span>
                     </template>
@@ -709,7 +763,7 @@
     <button :class="{active: view==='upcoming'}" @click="view='upcoming'">
       <span class="nav-icon">📅</span>
       <span class="nav-label">Предстоящи</span>
-      <span class="nav-badge" x-show="scheduledMatches.length > 0" x-text="scheduledMatches.length"></span>
+      <span class="nav-badge" x-show="activeScheduledMatches.length > 0" x-text="activeScheduledMatches.length"></span>
     </button>
     <button :class="{active: view==='matches'}" @click="view='matches'; matchPlayerFilter=''; matchSearch=''; matchFilter='all'">
       <span class="nav-icon">🎾</span>
@@ -732,7 +786,7 @@
         <div>
           <div class="modal-head">
             <button class="btn-close" @click="scoreMatch=null">✕</button>
-            <h3>Мач #<span x-text="scoreMatch.num"></span></h3>
+            <h3 x-text="scoreMatch.playNum ? 'Мач #' + scoreMatch.playNum : 'Запис на резултат'"></h3>
             <div style="width:36px"></div>
           </div>
           <div class="modal-vs">
@@ -776,7 +830,7 @@
         <div>
           <div class="modal-head">
             <button class="btn-close" @click="scheduleMatch=null">✕</button>
-            <h3>Планирай мач #<span x-text="scheduleMatch.num"></span></h3>
+            <h3>Планирай мач</h3>
             <div style="width:36px"></div>
           </div>
           <div class="modal-vs">
@@ -981,7 +1035,7 @@
             <button class="btn-close" @click="closeLive()">✕</button>
             <h3>
               <span class="live-dot"></span>
-              На живо · #<span x-text="liveMatch.num"></span>
+              На живо
             </h3>
             <div style="width:36px"></div>
           </div>

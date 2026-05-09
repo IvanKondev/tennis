@@ -167,12 +167,27 @@ document.addEventListener('alpine:init', () => {
       }
 
       const playedMatches = matches.filter(m => m.played);
-      // Hide past-dated unplayed matches from "upcoming" — they linger because admin
-      // forgot to enter result. They still exist in `matches` so admin can find &
-      // record them; we just don't pretend they're upcoming.
-      const todayStr = this.todayISO();
+      // Assign playNum: position in chronological order of being played.
+      // Matches without recordedAt (legacy seeded results) come first in
+      // their MATCHES_SEED order; new matches with recordedAt get the next
+      // sequential numbers in timestamp order.
+      const recAt = this.resultsRecordedAt || {};
+      const playOrdered = [...playedMatches].sort((a, b) => {
+        const ta = recAt[a.key] || '';
+        const tb = recAt[b.key] || '';
+        if (!ta && !tb) return a.num - b.num;       // both legacy → SEED order
+        if (!ta) return -1;                          // legacy before timestamped
+        if (!tb) return 1;
+        return ta.localeCompare(tb);                 // both timestamped → chronological
+      });
+      playOrdered.forEach((m, i) => { m.playNum = i + 1; });
+      matches.forEach(m => { if (m.playNum === undefined) m.playNum = null; });
+
+      // ALL scheduled-but-unplayed matches (incl past dates). Admin views and
+      // wizard shortcuts use this so past-scheduled matches are visible &
+      // recordable. The Upcoming view filters via `activeScheduledMatches`.
       const scheduledMatches = matches
-        .filter(m => !m.played && m.scheduledAt && m.scheduledAt.slice(0, 10) >= todayStr)
+        .filter(m => !m.played && m.scheduledAt)
         .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
 
       // Standings
@@ -343,9 +358,11 @@ document.addEventListener('alpine:init', () => {
 
     async pollForUpdates() {
       if (this.isUserBusy()) return;
-      // Throttle: 5s when live matches active, 25s otherwise
+      // Throttle: 5s when a live match is active (or about to start), 10s
+      // otherwise. Lower interval keeps viewers in sync with admin entries
+      // without spamming the server (304s cost ~50 bytes each).
       const now = Date.now();
-      const interval = this.hasActiveLive ? 5000 : 25000;
+      const interval = (this.hasActiveLive || this.matchesShouldBeLive.length > 0) ? 5000 : 10000;
       if (this._lastPoll && (now - this._lastPoll) < interval - 100) return;
       this._lastPoll = now;
       try {
@@ -419,9 +436,18 @@ document.addEventListener('alpine:init', () => {
         Promise.resolve().then(() => { this._fromServer = false; });
 
         const newLiveStr = JSON.stringify(this.live || {});
-        this.showToast(newLiveStr !== oldLiveStr
-          ? '🔴 Live резултат обновен'
-          : '✨ Данните са обновени');
+
+        // If we have a live modal open for a match that was finalized
+        // externally (admin in another tab, server live auto-finalize, etc.),
+        // close the modal so the user isn't tapping into thin air.
+        if (this.liveMatch && this.results[this.liveMatch.key]) {
+          this.closeLive();
+          this.showToast('🏆 Мачът е финализиран');
+        } else {
+          this.showToast(newLiveStr !== oldLiveStr
+            ? '🔴 Live резултат обновен'
+            : '✨ Данните са обновени');
+        }
       } catch (e) {
         // Silent fail — try again next tick
       }
@@ -485,11 +511,16 @@ document.addEventListener('alpine:init', () => {
         return [{ player, matches: list, isFiltered: true }];
       }
 
+      // Each match has TWO players. Both players' groups should contain it,
+      // otherwise the player listed second in MATCHES_SEED has 0 matches in
+      // their card while the first has 19 (and everyone in between
+      // monotonically less). Push to both groups for symmetry.
       const groups = {};
       PLAYERS.forEach(p => groups[p] = []);
       this.matches.forEach(m => {
         if (!matchPasses(m)) return;
         groups[m.p1].push(m);
+        groups[m.p2].push(m);
       });
       return PLAYERS
         .filter(p => groups[p].length > 0)
@@ -1293,6 +1324,9 @@ document.addEventListener('alpine:init', () => {
           this.liveError = data.error || 'Грешка при запис';
           this.showToast('⚠️ ' + this.liveError);
           this.livePending = false;
+          // Match was finalized elsewhere (409 conflict) — close the modal
+          // so the user stops trying to score a finished match.
+          if (r.status === 409) this.closeLive();
           return;
         }
         this.livePending = false;
@@ -1446,6 +1480,15 @@ document.addEventListener('alpine:init', () => {
       return d.toLocaleDateString('bg-BG', { day: 'numeric', month: 'short' });
     },
 
+    // scheduledMatches captured at recomputeDerived time may include
+    // entries that were "today/future" then but are "yesterday" now if the
+    // page survived past midnight without any data change. This getter
+    // re-filters using the live current date.
+    get activeScheduledMatches() {
+      const todayStr = this.todayISO();
+      return this.scheduledMatches.filter(m => m.scheduledAt && m.scheduledAt.slice(0, 10) >= todayStr);
+    },
+
     // Group scheduledMatches into 3 buckets for the Upcoming view.
     // Boundaries: today / rest of this calendar week (through Sunday) / later.
     get groupedScheduledMatches() {
@@ -1459,7 +1502,7 @@ document.addEventListener('alpine:init', () => {
       const nextWeekStr = this.toISODate(startOfNextWeek);
 
       const groups = { today: [], thisWeek: [], later: [] };
-      for (const m of this.scheduledMatches) {
+      for (const m of this.activeScheduledMatches) {
         const d = m.scheduledAt.slice(0, 10);
         if (d === todayStr) groups.today.push(m);
         else if (d < nextWeekStr) groups.thisWeek.push(m);
@@ -1468,17 +1511,24 @@ document.addEventListener('alpine:init', () => {
       return groups;
     },
 
-    // Most recent N played matches with timestamps. Seeded results have no
-    // timestamp and never appear here — by design (they're not "recent").
+    // Last 5 played matches. Sort priority:
+    //   1. Matches with recordedAt timestamp — newest first
+    //   2. Legacy matches (no timestamp) — by SEED index, latest first
+    // Always returns up to 5 entries when ANY matches have been played; that
+    // way the "recent results" panel is a stable fixture on the home page.
     get recentResults() {
+      const recAt = this.resultsRecordedAt || {};
       const out = [];
-      for (const k in (this.resultsRecordedAt || {})) {
-        const ts = this.resultsRecordedAt[k];
-        const m = this.matchByPair[k];
-        if (!m || !m.played || !ts) continue;
-        out.push({ key: k, match: m, recordedAt: ts });
+      for (const m of this.matches) {
+        if (!m.played) continue;
+        out.push({ key: m.key, match: m, recordedAt: recAt[m.key] || null });
       }
-      out.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+      out.sort((a, b) => {
+        if (a.recordedAt && b.recordedAt) return b.recordedAt.localeCompare(a.recordedAt);
+        if (a.recordedAt) return -1;   // timestamped first
+        if (b.recordedAt) return 1;
+        return b.match.num - a.match.num;  // legacy: higher SEED index first
+      });
       return out.slice(0, 5);
     },
 
@@ -1496,6 +1546,8 @@ document.addEventListener('alpine:init', () => {
       const data = JSON.stringify({
         results: this.results,
         schedule: this.schedule,
+        live: this.live,
+        resultsRecordedAt: this.resultsRecordedAt,
         exportedAt: new Date().toISOString()
       }, null, 2);
       const blob = new Blob([data], { type: 'application/json' });
@@ -1519,6 +1571,7 @@ document.addEventListener('alpine:init', () => {
           this.results = data.results;
           this.schedule = data.schedule || {};
           this.live = data.live || {};
+          this.resultsRecordedAt = data.resultsRecordedAt || {};
         } catch (err) {
           alert('Грешка при четене: ' + err.message);
         }
