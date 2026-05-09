@@ -236,7 +236,7 @@
                     <span class="rr-name" x-text="r.match.p2"></span>
                     <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p2)}`" x-text="initials(r.match.p2)"></span>
                   </div>
-                  <div class="rr-time" x-text="r.recordedAt ? timeFromNow(r.recordedAt) : ''"></div>
+                  <div class="rr-time" x-text="(() => { if (!r.recordedAt) return ''; const t = timeFromNow(r.recordedAt); return t === 'сега' ? '' : t; })()"></div>
                 </div>
               </template>
             </div>
@@ -690,9 +690,6 @@
               <button class="chip" :class="{active: matchFilter==='scheduled'}" @click="matchFilter='scheduled'">
                 📅 Планирани · <span x-text="scheduledMatches.length"></span>
               </button>
-              <button class="chip" :class="{active: matchFilter==='pending'}" @click="matchFilter='pending'">
-                ⏳ Чакащи · <span x-text="matches.filter(m=>!m.played && !m.scheduledAt).length"></span>
-              </button>
               <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">
                 ✓ Изиграни · <span x-text="playedMatches.length"></span>
               </button>
@@ -704,7 +701,12 @@
           </div>
 
           <div class="admin-list">
-            <template x-for="m in filteredMatches" :key="m.key">
+            <template x-for="g in filteredMatchesGrouped" :key="g.label || '_flat'">
+              <div class="admin-list-group">
+                <template x-if="g.label">
+                  <div class="admin-date-sep" x-text="g.label"></div>
+                </template>
+                <template x-for="m in g.items" :key="m.key">
               <div class="admin-match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
                 <div class="admin-match-info">
                   <div class="admin-match-top">
@@ -754,6 +756,8 @@
                   </template>
                 </div>
               </div>
+                </template>
+              </div>
             </template>
           </div>
         </div>
@@ -781,7 +785,7 @@
       <span class="nav-icon">⚔️</span>
       <span class="nav-label">Двубои</span>
     </button>
-    <button :class="{active: view==='admin'}" @click="view='admin'">
+    <button :class="{active: view==='admin'}" @click="view='admin'; matchFilter='scheduled'">
       <span class="nav-icon" x-text="isAdmin ? '🔓' : '🔒'"></span>
       <span class="nav-label">Админ</span>
     </button>

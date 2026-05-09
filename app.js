@@ -488,6 +488,47 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
+    // For the admin "Изиграни" filter: group filteredMatches by recordedAt
+    // day, newest first, with a trailing "По-рано" bucket for legacy entries.
+    // Other filters return a single unlabeled group so the template stays uniform.
+    get filteredMatchesGrouped() {
+      const list = this.filteredMatches;
+      if (this.matchFilter !== 'played') return [{ label: null, items: list }];
+
+      const recAt = this.resultsRecordedAt || {};
+      const withTs = [];
+      const noTs = [];
+      for (const m of list) {
+        if (recAt[m.key]) withTs.push(m);
+        else noTs.push(m);
+      }
+      withTs.sort((a, b) => recAt[b.key].localeCompare(recAt[a.key]));
+      noTs.sort((a, b) => b.num - a.num);
+
+      const todayStr = this.todayISO();
+      const y = new Date(todayStr + 'T00:00:00');
+      y.setDate(y.getDate() - 1);
+      const yesterdayStr = this.toISODate(y);
+
+      const groups = [];
+      let cur = null;
+      for (const m of withTs) {
+        const ts = recAt[m.key];
+        const d = ts.slice(0, 10);
+        let label;
+        if (d === todayStr) label = 'Днес';
+        else if (d === yesterdayStr) label = 'Вчера';
+        else label = new Date(ts).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
+        if (!cur || cur.label !== label) {
+          cur = { label, items: [] };
+          groups.push(cur);
+        }
+        cur.items.push(m);
+      }
+      if (noTs.length) groups.push({ label: 'Без дата', items: noTs });
+      return groups;
+    },
+
     // Group matches by p1 (or flat list when a player is filtered).
     // Respects matchFilter: 'all' | 'played' | 'upcoming' | 'pending' | 'scheduled'
     get groupedMatches() {
@@ -1279,6 +1320,28 @@ document.addEventListener('alpine:init', () => {
       // No onCancel: cancel just leaves cur unchanged; user can ←/→ to fix.
     },
 
+    // Local-mode counterpart of the server's auto-finalize (server.js POST
+    // /api/match/<key>/live). Promotes a 2-set winner from live → results,
+    // stamps recordedAt, clears schedule/live, closes the modal.
+    _finalizeLiveLocally(key, setsA, setsB) {
+      const m = this.matchByPair && this.matchByPair[key];
+      const newResults = { ...this.results, [key]: [setsA, setsB] };
+      this.results = newResults;
+      const newRecorded = { ...this.resultsRecordedAt, [key]: new Date().toISOString() };
+      this.resultsRecordedAt = newRecorded;
+      const newLive = { ...this.live };
+      delete newLive[key];
+      this.live = newLive;
+      if (this.schedule[key]) {
+        const newSchedule = { ...this.schedule };
+        delete newSchedule[key];
+        this.schedule = newSchedule;
+      }
+      this.persistLocal();
+      this.closeLive();
+      this.showToast('🏆 Финализирано: ' + setsA + ':' + setsB);
+    },
+
     async persistLive() {
       if (!this.liveMatch) return;
       const key = this.liveMatch.key;
@@ -1308,7 +1371,19 @@ document.addEventListener('alpine:init', () => {
       this.live = newLive;
       this.persistLocal();
 
-      if (this.backendMode !== 'api') return;
+      if (this.backendMode !== 'api') {
+        // Local mode has no server to auto-finalize. If 2 sets are won we
+        // must promote live → results client-side, mirroring server.js.
+        if (!draftEmpty) {
+          let a = 0, b = 0;
+          for (const [x, y] of this.liveDraft.sets) {
+            if (x > y) a++;
+            else if (y > x) b++;
+          }
+          if (a >= 2 || b >= 2) this._finalizeLiveLocally(key, a, b);
+        }
+        return;
+      }
       this.livePending = true;
       this.liveError = '';
       try {
@@ -1511,42 +1586,24 @@ document.addEventListener('alpine:init', () => {
       return groups;
     },
 
-    // Last 5 played matches that count as "recent activity" — entered via
-    // the app rather than imported with the seed. We classify by:
-    //   - has recordedAt → recent (regardless of source)
-    //   - no recordedAt + seed had it pre-played → legacy bulk-import, skip
-    //   - no recordedAt + seed did NOT have it → entered via app before
-    //     timestamping shipped (or via a path that didn't stamp); include
-    //     and sort after the timestamped ones by SEED index desc.
+    // Last 5 timestamped results. Undated entries (legacy seed-imports or
+    // pre-timestamping app entries) are excluded — without a real recordedAt
+    // we can't honestly date them, and the home panel is meant to show
+    // genuinely recent activity.
     get recentResults() {
-      if (!this._seedPrePlayedKeys) {
-        const s = new Set();
-        for (const [p1, p2, res] of MATCHES_SEED) {
-          if (res) s.add(p1 + '|' + p2);
-        }
-        this._seedPrePlayedKeys = s;
-      }
-      const seedPlayed = this._seedPrePlayedKeys;
       const recAt = this.resultsRecordedAt || {};
       const out = [];
       for (const m of this.matches) {
         if (!m.played) continue;
-        const ts = recAt[m.key] || null;
-        if (!ts && seedPlayed.has(m.key)) continue;
+        const ts = recAt[m.key];
+        if (!ts) continue;
         out.push({ key: m.key, match: m, recordedAt: ts });
       }
-      out.sort((a, b) => {
-        if (a.recordedAt && b.recordedAt) return b.recordedAt.localeCompare(a.recordedAt);
-        if (a.recordedAt) return -1;
-        if (b.recordedAt) return 1;
-        return b.match.num - a.match.num;
-      });
+      out.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
       return out.slice(0, 5);
     },
 
     // Group recentResults by recorded-day. Labels: Днес / Вчера / "5 май".
-    // Entries without recordedAt (post-seed app entries from before stamping
-    // shipped) fall under "По-рано".
     get recentResultsByDate() {
       const recent = this.recentResults;
       if (recent.length === 0) return [];
@@ -1559,15 +1616,11 @@ document.addEventListener('alpine:init', () => {
       const groups = [];
       let cur = null;
       for (const r of recent) {
+        const d = r.recordedAt.slice(0, 10);
         let label;
-        if (r.recordedAt) {
-          const d = r.recordedAt.slice(0, 10);
-          if (d === todayStr) label = 'Днес';
-          else if (d === yesterdayStr) label = 'Вчера';
-          else label = new Date(r.recordedAt).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
-        } else {
-          label = 'По-рано';
-        }
+        if (d === todayStr) label = 'Днес';
+        else if (d === yesterdayStr) label = 'Вчера';
+        else label = new Date(r.recordedAt).toLocaleDateString('bg-BG', { day: 'numeric', month: 'long' });
         if (!cur || cur.label !== label) {
           cur = { label, items: [] };
           groups.push(cur);
