@@ -28,6 +28,16 @@ document.addEventListener('alpine:init', () => {
     newPlayerName: '',
     addPlayerError: '',
     playersExpanded: false,
+    playerSearch: '',
+    // Inline player rename: editing state lives in the parent component so a
+    // browser-level prompt() doesn't have to interrupt the flow. When set,
+    // the matching row in the drawer renders an input + save/cancel buttons.
+    playerEditing: null,
+    playerEditValue: '',
+    playerEditError: '',
+    // Custom delete confirmation: shows match-count context (preventing the
+    // "I didn't realize this would wipe 15 matches" footgun).
+    playerDeleting: null,
 
     // Admin v2 UI: progressive disclosure state. The admin panel is
     // task-centric — only what the user needs RIGHT NOW is visible by
@@ -80,6 +90,10 @@ document.addEventListener('alpine:init', () => {
     },
 
     duelExpanded: null,
+    duelSearch: '',
+    // Whether the "Неизиграни" sub-section is expanded inside a duel card.
+    // Per-player so opening it for one doesn't affect another.
+    duelPendingExpanded: {},
 
     // Backend mode: 'api' (server) or 'local' (localStorage fallback)
     backendMode: 'local',
@@ -301,6 +315,9 @@ document.addEventListener('alpine:init', () => {
         if (y.setsWon !== x.setsWon) return y.setsWon - x.setsWon;
         return x.name.localeCompare(y.name, 'bg');
       });
+      // Stamp the global rank on each standings entry so filtered views (the
+      // duels search) can still show "rank 7" instead of "rank 1 of filtered".
+      standings.forEach((s, idx) => { s.rank = idx + 1; });
 
       this.matches = matches;
       this.matchByPair = byPair;
@@ -756,6 +773,87 @@ document.addEventListener('alpine:init', () => {
       const pSets = m.p1 === p ? m.s1 : m.s2;
       const opSets = m.p1 === p ? m.s2 : m.s1;
       return pSets + ':' + opSets;
+    },
+
+    // Filtered standings for the duels view. Search is case-insensitive,
+    // matches start-of-name first then substring (helps "Иво" not get drowned
+    // by "Жоро Иванов" matches).
+    get duelsList() {
+      const q = (this.duelSearch || '').trim().toLowerCase();
+      if (!q) return this.standings;
+      return this.standings.filter(s => s.name.toLowerCase().includes(q));
+    },
+
+    // Standings split into "active" (played ≥ 1) and "inactive" (0 played).
+    // Inactive players are visually de-emphasized and shown under a
+    // separator at the bottom — same pattern as the duels view. Search
+    // applies to both lists so a typed query filters everything.
+    get standingsActive() {
+      const q = (this.duelSearch || '').trim().toLowerCase();
+      const list = this.standings.filter(s => s.played > 0);
+      return q ? list.filter(s => s.name.toLowerCase().includes(q)) : list;
+    },
+    get standingsInactive() {
+      const q = (this.duelSearch || '').trim().toLowerCase();
+      const list = this.standings.filter(s => !s.played);
+      const sorted = list.slice().sort((a, b) => a.name.localeCompare(b.name, 'bg'));
+      return q ? sorted.filter(s => s.name.toLowerCase().includes(q)) : sorted;
+    },
+
+    // Group opponents by status for the expanded card. Sorted within each
+    // bucket by name. Pending bucket is collapsible to keep the card tight.
+    duelOpponentsGrouped(p) {
+      const wins = [], losses = [], scheduled = [], pending = [];
+      for (const op of this.players) {
+        if (op === p) continue;
+        const m = this.matchBetween(p, op);
+        if (m && m.played) {
+          (m.winner === p ? wins : losses).push(op);
+        } else if (m && m.scheduledAt) {
+          scheduled.push(op);
+        } else {
+          pending.push(op);
+        }
+      }
+      const byName = (a, b) => a.localeCompare(b, 'bg');
+      wins.sort(byName); losses.sort(byName);
+      scheduled.sort(byName); pending.sort(byName);
+      return { wins, losses, scheduled, pending };
+    },
+
+    // Win rate as 0..1 — kept for any future use, but the duels view now
+    // surfaces "match completion progress" (matches played out of total
+    // possible) which is more meaningful early in a round-robin: small-sample
+    // win rates are noisy, while progress is fair across all players.
+    duelWinRate(s) {
+      if (!s || !s.played) return null;
+      return s.wins / s.played;
+    },
+
+    // Match-completion rate: 0..1 = (played / total possible). Total possible
+    // is players.length - 1 (round-robin: everyone plays everyone once).
+    duelProgressRate(s) {
+      if (!s) return 0;
+      const total = Math.max(1, this.players.length - 1);
+      return Math.min(1, s.played / total);
+    },
+
+    // "5 / 19" — for the bar title.
+    duelProgressLabel(s) {
+      if (!s) return '';
+      const total = Math.max(0, this.players.length - 1);
+      return `${s.played} / ${total}`;
+    },
+
+    // 'gold' | 'silver' | 'bronze' | null — based on ranking position.
+    // Only awarded if the player has played at least one match (otherwise a
+    // 0-0 player at the top of the list would get a podium accent for nothing).
+    duelPodium(s, idx) {
+      if (!s || !s.played) return null;
+      if (idx === 0) return 'gold';
+      if (idx === 1) return 'silver';
+      if (idx === 2) return 'bronze';
+      return null;
     },
 
     duelOpponents(p) {
@@ -1411,11 +1509,59 @@ document.addEventListener('alpine:init', () => {
 
     // Click on a player anywhere → jump to matches view filtered by them
     jumpToPlayer(name) {
-      this.matchPlayerFilter = name;
-      this.matchSearch = '';
-      this.matchFilter = 'all';
-      this.view = 'matches';
-      // scroll handled by view watcher
+      // Navigate to the duels view and expand that player's card. This used
+      // to switch to the Matches view, but Matches was a redundant
+      // "grouped-by-player" listing of the same data the Duels view shows
+      // from a single player's perspective. Consolidating: one source of
+      // truth, one navigation target.
+      this.duelExpanded = name;
+      this.view = 'grid';
+      // Scroll to top — the watcher does it, but if already on `grid` view
+      // the watcher won't fire.
+      requestAnimationFrame(() => {
+        const el = document.querySelector('.duel-card-v2.open');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    },
+
+    // Date sub-line for a duel row. Returns "" when there's nothing
+    // meaningful to show (pending, no recordedAt). Different from
+    // duelRowText which is the score/status on the right.
+    duelRowSubline(p, op) {
+      const m = this.matchBetween(p, op);
+      if (!m) return '';
+      if (m.played) {
+        const ts = (this.resultsRecordedAt || {})[m.key];
+        if (!ts) return '';
+        return this.timeFromNow(ts);
+      }
+      if (m.scheduledAt) {
+        // Inside the row we already render duelRowText with the relative
+        // time as headline ("УТРЕ", "след 2ч"). Here in the subline we add
+        // the absolute time so the user gets both pieces at a glance.
+        const d = new Date(m.scheduledAt);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleString('bg-BG', {
+          day: 'numeric', month: 'short',
+          hour: '2-digit', minute: '2-digit'
+        });
+      }
+      return '';
+    },
+
+    // True if the match between p and op is happening today (admin / volunteer
+    // can record live or final). Used to surface inline scoring CTAs.
+    duelCanWriteToday(p, op) {
+      const m = this.matchBetween(p, op);
+      if (!m) return false;
+      return this.canWriteToday(m);
+    },
+
+    // Match object for the bottom-sheet open helpers. Used so the duel-row
+    // can dispatch openLive(m) / openScore(m) without the row knowing about
+    // the underlying match object shape.
+    duelMatchOf(p, op) {
+      return this.matchBetween(p, op) || null;
     },
 
     // ======= LIVE SCORING =======
@@ -1900,6 +2046,46 @@ document.addEventListener('alpine:init', () => {
       return this.scheduledMatches.filter(m => m.scheduledAt && m.scheduledAt.slice(0, 10) >= todayStr);
     },
 
+    // Ordered list of non-empty groups for the Upcoming view. Each group
+    // describes how to render: title, icon, hero flag (visual emphasis), and
+    // its matches sorted by scheduled time. Empty groups are filtered out so
+    // the page doesn't show "Тази седмица: (nothing)" gaps.
+    get upcomingGroups() {
+      const g = this.groupedScheduledMatches;
+      const sortByTime = (a, b) => a.scheduledAt.localeCompare(b.scheduledAt);
+      g.today.sort(sortByTime);
+      g.thisWeek.sort(sortByTime);
+      g.later.sort(sortByTime);
+      const out = [];
+      if (g.today.length > 0)    out.push({ key: 'today',     title: 'Днес',                icon: '📅', hero: true,  items: g.today });
+      if (g.thisWeek.length > 0) out.push({ key: 'this-week', title: 'Тази седмица',         icon: '🗓',  hero: false, items: g.thisWeek });
+      if (g.later.length > 0)    out.push({ key: 'later',     title: 'Следващи седмици',     icon: '⏭',  hero: false, items: g.later });
+      return out;
+    },
+
+    // Countdown to a scheduled match — "след 2ч 15мин" / "след 3д 5ч". Returns
+    // empty string if the match is in the past or the input is invalid.
+    countdownTo(iso) {
+      if (!iso) return '';
+      const target = new Date(iso).getTime();
+      if (isNaN(target)) return '';
+      const diffMs = target - this._now;
+      if (diffMs <= 0) return '';
+      const totalMin = Math.floor(diffMs / 60000);
+      if (totalMin < 60) return 'след ' + totalMin + ' мин';
+      const totalHrs = Math.floor(totalMin / 60);
+      const remMin = totalMin % 60;
+      if (totalHrs < 24) {
+        return remMin > 0 ? `след ${totalHrs}ч ${remMin}мин` : `след ${totalHrs}ч`;
+      }
+      const days = Math.floor(totalHrs / 24);
+      const remHrs = totalHrs % 24;
+      if (days < 7) {
+        return remHrs > 0 ? `след ${days}д ${remHrs}ч` : `след ${days}д`;
+      }
+      return '';  // > 1 week — drop the countdown, the date itself is enough
+    },
+
     // Group scheduledMatches into 3 buckets for the Upcoming view.
     // Boundaries: today / rest of this calendar week (through Sunday) / later.
     get groupedScheduledMatches() {
@@ -2101,6 +2287,83 @@ document.addEventListener('alpine:init', () => {
 
     closeMatchActions() {
       this.adminMatchActions = null;
+    },
+
+    // ===== Players drawer helpers =====
+
+    // Return the standings entry for a player (or a zero-stats stub).
+    playerStanding(name) {
+      return this.standings.find(s => s.name === name)
+        || { name, played: 0, wins: 0, losses: 0 };
+    },
+
+    // Filtered + grouped player list for the drawer. Matches the standings
+    // pattern: active first (≥1 played), then inactive, with search applied
+    // to both.
+    get adminPlayersGrouped() {
+      const q = (this.playerSearch || '').trim().toLowerCase();
+      const active = [], inactive = [];
+      for (const p of this.players) {
+        if (q && !p.toLowerCase().includes(q)) continue;
+        const s = this.playerStanding(p);
+        if (s.played > 0) active.push(s);
+        else inactive.push(s);
+      }
+      // Active sorted by standings (best first); inactive alphabetical.
+      active.sort((x, y) => (this.standings.indexOf(x) - this.standings.indexOf(y)));
+      inactive.sort((x, y) => x.name.localeCompare(y.name, 'bg'));
+      return { active, inactive };
+    },
+
+    startEditPlayer(name) {
+      this.playerEditing = name;
+      this.playerEditValue = name;
+      this.playerEditError = '';
+      // Focus the input on the next paint — Alpine swaps the row template
+      // first; querying immediately returns the old DOM.
+      requestAnimationFrame(() => {
+        const el = document.querySelector('.player-row.editing input');
+        if (el) { el.focus(); el.select(); }
+      });
+    },
+
+    cancelEditPlayer() {
+      this.playerEditing = null;
+      this.playerEditValue = '';
+      this.playerEditError = '';
+    },
+
+    async saveEditPlayer() {
+      const oldName = this.playerEditing;
+      const newName = (this.playerEditValue || '').trim();
+      if (!oldName) return;
+      if (!newName) { this.playerEditError = 'Името не може да е празно'; return; }
+      if (newName === oldName) { this.cancelEditPlayer(); return; }
+      const res = await this.renamePlayer(oldName, newName);
+      if (res.ok) {
+        this.cancelEditPlayer();
+      } else {
+        this.playerEditError = res.error || 'Грешка';
+      }
+    },
+
+    confirmDeletePlayer(name) {
+      this.playerDeleting = this.playerStanding(name);
+    },
+
+    cancelDeletePlayer() {
+      this.playerDeleting = null;
+    },
+
+    async executeDeletePlayer() {
+      const p = this.playerDeleting;
+      if (!p) return;
+      const res = await this.deletePlayer(p.name);
+      this.playerDeleting = null;
+      if (!res.ok) {
+        // Reuse the toast — small, non-blocking, fits the rest of the UI.
+        this.showToast('✕ ' + (res.error || 'Грешка'));
+      }
     },
 
     // ======= EXPORT / IMPORT =======

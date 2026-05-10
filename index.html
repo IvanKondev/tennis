@@ -95,19 +95,22 @@
   </div>
 
   <!-- HERO (compact, only on standings) -->
-  <header class="hero" x-show="view === 'standings'">
+  <header class="hero hero-compact" x-show="view === 'standings'">
     <h1 class="hero-title">
       <span class="line-1">Тенис Лига</span>
       <span class="line-2">Велинград</span>
     </h1>
-    <div class="hero-stats">
-      <span><b x-text="players.length"></b> играчи</span>
-      <span class="hero-sep">·</span>
-      <span><b x-text="playedMatches.length"></b>/<span x-text="matches.length"></span> мача</span>
-      <span class="hero-sep">·</span>
-      <span><b x-text="scheduledMatches.length"></b> планирани</span>
-      <span class="hero-sep">·</span>
-      <span><b x-text="Math.round(playedMatches.length / matches.length * 100) + '%'"></b></span>
+    <!-- Tournament-progress bar — replaces the previous 4-metric stats line.
+         The dominant question on a hobby league's home page is "how far along
+         are we?" — answer it visually + numerically in one strip. -->
+    <div class="tournament-progress" :title="playedMatches.length + ' изиграни от ' + matches.length + ' мача'">
+      <div class="tp-bar">
+        <div class="tp-bar-fill" :style="`width: ${matches.length ? Math.round(playedMatches.length / matches.length * 100) : 0}%`"></div>
+      </div>
+      <div class="tp-meta">
+        <span class="tp-pct" x-text="(matches.length ? Math.round(playedMatches.length / matches.length * 100) : 0) + '%'"></span>
+        <span class="tp-frac"><span x-text="playedMatches.length"></span> от <span x-text="matches.length"></span> мача</span>
+      </div>
     </div>
   </header>
 
@@ -201,68 +204,8 @@
         </div>
       </template>
 
-      <!-- Today's matches quick-write -->
-      <template x-if="todaysMatches.length > 0">
-        <div class="today-banner">
-          <div class="today-banner-head">📅 Мачове днес — въведи резултат</div>
-          <template x-for="m in todaysMatches" :key="m.key">
-            <div class="today-banner-row" :class="{'is-live': isMatchLive(m)}">
-              <div class="today-banner-info">
-                <span class="today-banner-time" x-text="m.scheduledAt.slice(11,16)"></span>
-                <span class="today-banner-vs">
-                  <span x-text="m.p1"></span>
-                  <span class="today-banner-sep">vs</span>
-                  <span x-text="m.p2"></span>
-                </span>
-              </div>
-              <template x-if="isMatchLive(m)">
-                <button class="btn-live small" @click="openLive(m)">
-                  <span class="live-dot"></span>
-                  <span x-text="formatLiveScore(m)"></span>
-                </button>
-              </template>
-              <template x-if="!isMatchLive(m)">
-                <div class="today-banner-actions">
-                  <button class="btn-live small" @click="openLive(m)">🔴 Live</button>
-                  <button class="btn-final small" @click="openScore(m)">🏁</button>
-                </div>
-              </template>
-            </div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Recent results — last 5 finished matches with timestamps -->
-      <template x-if="recentResults.length > 0">
-        <div class="recent-results">
-          <div class="recent-results-head">🏆 Последни резултати</div>
-          <template x-for="g in recentResultsByDate" :key="g.label || '_flat'">
-            <div class="rr-group">
-              <template x-if="g.label">
-                <div class="rr-date-sep" x-text="g.label"></div>
-              </template>
-              <template x-for="r in g.items" :key="r.key">
-                <div class="recent-result-row" @click="jumpToPlayer(r.match.winner)">
-                  <div class="rr-side" :class="{winner: r.match.winner === r.match.p1}">
-                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p1)}`" x-text="initials(r.match.p1)"></span>
-                    <span class="rr-name" x-text="r.match.p1"></span>
-                  </div>
-                  <div class="rr-score">
-                    <span :class="{won: r.match.s1 > r.match.s2}" x-text="r.match.s1"></span><span class="rr-colon">:</span><span :class="{won: r.match.s2 > r.match.s1}" x-text="r.match.s2"></span>
-                  </div>
-                  <div class="rr-side right" :class="{winner: r.match.winner === r.match.p2}">
-                    <span class="rr-name" x-text="r.match.p2"></span>
-                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(r.match.p2)}`" x-text="initials(r.match.p2)"></span>
-                  </div>
-                  <div class="rr-time" x-text="(() => { if (!r.recordedAt) return ''; const t = timeFromNow(r.recordedAt); return t === 'сега' ? '' : t; })()"></div>
-                </div>
-              </template>
-            </div>
-          </template>
-        </div>
-      </template>
-
-      <!-- Podium -->
+      <!-- Podium — only when there's at least one played match. Compact
+           variant with W-L record + match-completion progress alongside name. -->
       <template x-if="standings[0] && standings[0].played > 0">
         <div class="podium">
           <template x-if="standings[1]">
@@ -270,7 +213,10 @@
               <div class="podium-medal">🥈</div>
               <div class="avatar lg" :style="`--avatar-hue:${playerHue(standings[1].name)}`" x-text="initials(standings[1].name)"></div>
               <div class="podium-name" x-text="standings[1].name"></div>
-              <div class="podium-points"><span x-text="standings[1].points"></span> т.</div>
+              <div class="podium-stats">
+                <span class="wl-w" x-text="standings[1].wins"></span>–<span class="wl-l" x-text="standings[1].losses"></span>
+                <span class="podium-progress" x-text="duelProgressLabel(standings[1])"></span>
+              </div>
             </div>
           </template>
           <div class="podium-spot p1" @click="jumpToPlayer(standings[0].name)">
@@ -278,53 +224,120 @@
             <div class="podium-medal">🥇</div>
             <div class="avatar xl" :style="`--avatar-hue:${playerHue(standings[0].name)}`" x-text="initials(standings[0].name)"></div>
             <div class="podium-name" x-text="standings[0].name"></div>
-            <div class="podium-points"><span x-text="standings[0].points"></span> т.</div>
+            <div class="podium-stats">
+              <span class="wl-w" x-text="standings[0].wins"></span>–<span class="wl-l" x-text="standings[0].losses"></span>
+              <span class="podium-progress" x-text="duelProgressLabel(standings[0])"></span>
+            </div>
           </div>
           <template x-if="standings[2]">
             <div class="podium-spot p3" @click="jumpToPlayer(standings[2].name)">
               <div class="podium-medal">🥉</div>
               <div class="avatar lg" :style="`--avatar-hue:${playerHue(standings[2].name)}`" x-text="initials(standings[2].name)"></div>
               <div class="podium-name" x-text="standings[2].name"></div>
-              <div class="podium-points"><span x-text="standings[2].points"></span> т.</div>
+              <div class="podium-stats">
+                <span class="wl-w" x-text="standings[2].wins"></span>–<span class="wl-l" x-text="standings[2].losses"></span>
+                <span class="podium-progress" x-text="duelProgressLabel(standings[2])"></span>
+              </div>
             </div>
           </template>
         </div>
       </template>
 
-      <div class="panel-head">
-        <h2>Класиране</h2>
-        <p>Точки → победи → разлика в сетове · <em>кликни играч за подробности</em></p>
-      </div>
-      <div class="standings-wrap">
-        <table class="standings">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th class="left">Играч</th>
-              <th class="hide-mobile">И</th>
-              <th>П</th>
-              <th class="hide-mobile">З</th>
-              <th>Сетове</th>
-              <th>Точки</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="(s, i) in standings" :key="s.name">
-              <tr @click="jumpToPlayer(s.name)" class="clickable">
-                <td><span class="rank" :class="`rank-${i+1}`" x-text="i+1"></span></td>
-                <td class="player-cell">
-                  <span class="avatar" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
-                  <span class="player-name" x-text="s.name"></span>
-                </td>
-                <td class="hide-mobile" x-text="s.played"></td>
-                <td x-text="s.wins"></td>
-                <td class="hide-mobile" x-text="s.losses"></td>
-                <td class="sets"><span x-text="s.setsWon"></span>:<span x-text="s.setsLost"></span></td>
-                <td class="points" x-text="s.points"></td>
-              </tr>
+      <!-- Recent results — placed BEFORE the standings because users open
+           the home page mostly to check "what just happened?". Open by
+           default; collapse via the disclosure if you want to skip it. -->
+      <template x-if="recentResults.length > 0">
+        <details class="recent-section" open>
+          <summary class="recent-section-head">
+            <span class="rs-icon">🏆</span>
+            <span class="rs-title">Последни резултати</span>
+            <span class="rs-count" x-text="recentResults.length"></span>
+            <span class="rs-chevron">▾</span>
+          </summary>
+          <div class="recent-section-body">
+            <template x-for="g in recentResultsByDate" :key="g.label || '_flat'">
+              <div class="rr-group">
+                <template x-if="g.label">
+                  <div class="rr-date-sep" x-text="g.label"></div>
+                </template>
+                <template x-for="r in g.items" :key="r.key">
+                  <div class="recent-line" @click="jumpToPlayer(r.match.winner)">
+                    <span class="rl-winner" x-text="r.match.winner"></span>
+                    <span class="rl-score" x-text="(r.match.winner === r.match.p1 ? r.match.s1 : r.match.s2) + ':' + (r.match.winner === r.match.p1 ? r.match.s2 : r.match.s1)"></span>
+                    <span class="rl-loser" x-text="r.match.winner === r.match.p1 ? r.match.p2 : r.match.p1"></span>
+                  </div>
+                </template>
+              </div>
             </template>
-          </tbody>
-        </table>
+          </div>
+        </details>
+      </template>
+
+      <div class="panel-head panel-head-compact">
+        <h2>Класиране</h2>
+        <p><em>Кликни играч за подробности</em></p>
+      </div>
+
+      <!-- Search bar — only useful when the list gets long. -->
+      <template x-if="players.length > 8">
+        <div class="standings-search">
+          <input type="search" x-model="duelSearch" placeholder="🔍 Намери играч..." />
+          <button class="duels-search-clear" x-show="duelSearch" @click="duelSearch=''" aria-label="Изчисти">✕</button>
+        </div>
+      </template>
+
+      <!-- Active players (have ≥1 played match). Top-3 get medal accents. -->
+      <div class="standings-list">
+        <template x-for="(s, i) in standingsActive" :key="s.name">
+          <div class="standings-row"
+               :class="{['podium-' + (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '')]: i < 3}"
+               @click="jumpToPlayer(s.name)">
+            <span class="sr-rank" x-text="s.rank"></span>
+            <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+            <div class="sr-info">
+              <span class="sr-name" x-text="s.name"></span>
+              <span class="sr-meta">
+                <span class="wl-w" x-text="s.wins"></span>–<span class="wl-l" x-text="s.losses"></span>
+                <span class="sr-meta-sep">·</span>
+                <span class="sr-sets"><span x-text="s.setsWon"></span>:<span x-text="s.setsLost"></span></span>
+                <span class="sr-meta-sep">·</span>
+                <span class="sr-progress" x-text="duelProgressLabel(s)"></span>
+              </span>
+            </div>
+            <span class="sr-points">
+              <span class="sr-points-val" x-text="s.wins"></span>
+              <span class="sr-points-label">Поб.</span>
+            </span>
+            <span class="sr-chev">›</span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Inactive players (0 played) — collapsed-style separator + dim rows. -->
+      <template x-if="standingsInactive.length > 0">
+        <div class="standings-inactive">
+          <div class="standings-sep">
+            <span class="ss-line"></span>
+            <span class="ss-label">Без мачове · <span x-text="standingsInactive.length"></span></span>
+            <span class="ss-line"></span>
+          </div>
+          <template x-for="s in standingsInactive" :key="s.name">
+            <div class="standings-row dim" @click="jumpToPlayer(s.name)">
+              <span class="sr-rank">—</span>
+              <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+              <div class="sr-info">
+                <span class="sr-name" x-text="s.name"></span>
+                <span class="sr-meta">няма мачове</span>
+              </div>
+              <span class="sr-chev">›</span>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Empty search results -->
+      <div class="duels-empty" x-show="duelSearch && standingsActive.length === 0 && standingsInactive.length === 0">
+        Няма играч с име "<span x-text="duelSearch"></span>"
       </div>
     </section>
 
@@ -341,16 +354,24 @@
           <p>Админът може да планира мачове от админ панела.</p>
         </div>
       </template>
-      <template x-if="groupedScheduledMatches.today.length > 0">
-        <div class="upcoming-group">
-          <h3 class="upcoming-group-head">📅 Днес</h3>
+      <template x-for="g in upcomingGroups" :key="g.key">
+        <div class="upcoming-group" :class="{ hero: g.hero }">
+          <h3 class="upcoming-group-head">
+            <span class="ug-icon" x-text="g.icon"></span>
+            <span class="ug-title" x-text="g.title"></span>
+            <span class="ug-count" x-text="g.items.length"></span>
+          </h3>
           <div class="upcoming-list">
-            <template x-for="m in groupedScheduledMatches.today" :key="m.key">
-              <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
+            <template x-for="m in g.items" :key="m.key">
+              <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m), 'is-hero': g.hero}">
                 <div class="upcoming-date-row">
-                  <div class="upcoming-date"><span x-text="formatDateLong(m.scheduledAt)"></span></div>
+                  <div class="upcoming-date" x-text="formatDateLong(m.scheduledAt)"></div>
                   <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
                 </div>
+                <!-- Countdown shown only on the hero (today) card — that's
+                     where minute-level precision matters. Other groups have
+                     the relative pill ("УТРЕ", "СЛЕД 4 ДНИ") which is enough. -->
+                <div class="upcoming-countdown" x-show="g.hero && countdownTo(m.scheduledAt)" x-text="countdownTo(m.scheduledAt)"></div>
                 <div class="upcoming-vs">
                   <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
                     <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
@@ -381,265 +402,164 @@
           </div>
         </div>
       </template>
-
-      <template x-if="groupedScheduledMatches.thisWeek.length > 0">
-        <div class="upcoming-group">
-          <h3 class="upcoming-group-head">🗓 Тази седмица</h3>
-          <div class="upcoming-list">
-            <template x-for="m in groupedScheduledMatches.thisWeek" :key="m.key">
-              <div class="upcoming-card" :class="{'is-today': isMatchToday(m), 'is-live': isMatchLive(m)}">
-                <div class="upcoming-date-row">
-                  <div class="upcoming-date"><span x-text="formatDateLong(m.scheduledAt)"></span></div>
-                  <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
-                </div>
-                <div class="upcoming-vs">
-                  <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
-                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
-                    <span class="upcoming-name" x-text="m.p1"></span>
-                  </div>
-                  <div class="upcoming-vs-sep">VS</div>
-                  <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
-                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
-                    <span class="upcoming-name" x-text="m.p2"></span>
-                  </div>
-                </div>
-                <template x-if="canWriteToday(m) && !isMatchLive(m)">
-                  <div class="today-actions">
-                    <button class="btn-live" @click="openLive(m)">🔴 На живо</button>
-                    <button class="btn-final" @click="openScore(m)">🏁 Краен резултат</button>
-                  </div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </div>
-      </template>
-
-      <template x-if="groupedScheduledMatches.later.length > 0">
-        <div class="upcoming-group">
-          <h3 class="upcoming-group-head">⏭ Следващи седмици</h3>
-          <div class="upcoming-list">
-            <template x-for="m in groupedScheduledMatches.later" :key="m.key">
-              <div class="upcoming-card">
-                <div class="upcoming-date-row">
-                  <div class="upcoming-date"><span x-text="formatDateLong(m.scheduledAt)"></span></div>
-                  <span class="upcoming-when-pill" x-show="dateRelative(m.scheduledAt)" x-text="dateRelative(m.scheduledAt)"></span>
-                </div>
-                <div class="upcoming-vs">
-                  <div class="upcoming-player" @click="jumpToPlayer(m.p1)">
-                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p1)}`" x-text="initials(m.p1)"></span>
-                    <span class="upcoming-name" x-text="m.p1"></span>
-                  </div>
-                  <div class="upcoming-vs-sep">VS</div>
-                  <div class="upcoming-player right" @click="jumpToPlayer(m.p2)">
-                    <span class="avatar lg" :style="`--avatar-hue:${playerHue(m.p2)}`" x-text="initials(m.p2)"></span>
-                    <span class="upcoming-name" x-text="m.p2"></span>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-      </template>
     </section>
 
     <!-- ===== MATCHES ===== -->
-    <template x-if="view === 'matches'">
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Мачове</h2>
-        <p x-show="matchPlayerFilter">
-          Показване на мачовете на <strong x-text="matchPlayerFilter"></strong>
-          <button class="link-btn" @click="matchPlayerFilter=''">✕ махни филтъра</button>
-        </p>
-      </div>
-
-      <div class="filters sticky-filters">
-        <button type="button" class="select-trigger"
-          @click="openPlayerPicker(name => matchPlayerFilter = name || '', { title: 'Филтър по играч' })">
-          <span class="select-trigger-label">
-            <template x-if="matchPlayerFilter">
-              <span class="select-trigger-current">
-                <span class="avatar sm" :style="`--avatar-hue:${playerHue(matchPlayerFilter)}`" x-text="initials(matchPlayerFilter)"></span>
-                <span x-text="matchPlayerFilter"></span>
-              </span>
-            </template>
-            <template x-if="!matchPlayerFilter">
-              <span class="select-trigger-placeholder">👥 Всички играчи</span>
-            </template>
-          </span>
-          <span class="select-arrow">▾</span>
-        </button>
-
-        <div class="chip-row scrollable">
-          <button class="chip" :class="{active: matchFilter==='all'}" @click="matchFilter='all'">Всички</button>
-          <button class="chip" :class="{active: matchFilter==='played'}" @click="matchFilter='played'">✓ Изиграни</button>
-          <button class="chip" :class="{active: matchFilter==='upcoming'}" @click="matchFilter='upcoming'">📅 Предстоящи</button>
-        </div>
-
-        <input type="search" x-model="matchSearch" placeholder="🔍 Търси играч..." />
-      </div>
-
-      <template x-if="groupedMatches.length === 0">
-        <div class="empty-state">
-          <div class="empty-icon">🔍</div>
-          <h3>Няма намерени мачове</h3>
-          <p>Опитай с друго търсене.</p>
-        </div>
-      </template>
-
-      <template x-for="g in groupedMatches" :key="g.player">
-        <div class="match-group">
-          <div class="match-group-head" @click="jumpToPlayer(g.player)">
-            <span class="avatar sm" :style="`--avatar-hue:${playerHue(g.player)}`" x-text="initials(g.player)"></span>
-            <span class="match-group-name" x-text="g.player"></span>
-            <span class="match-group-count">
-              <span x-text="g.matches.filter(m=>m.played).length"></span> /
-              <span x-text="g.matches.length"></span>
-            </span>
-          </div>
-          <div class="match-group-list">
-            <template x-for="m in g.matches" :key="m.key">
-              <div class="match" :class="{played: m.played, scheduled: !m.played && m.scheduledAt, 'is-live': isMatchLive(m)}">
-                <div class="match-top">
-                  <span class="match-num" x-show="m.playNum">#<span x-text="m.playNum"></span></span>
-                  <template x-if="isMatchLive(m)">
-                    <span class="match-status live"><span class="live-dot"></span> LIVE <span x-text="formatLiveScore(m)"></span></span>
-                  </template>
-                  <template x-if="!isMatchLive(m) && !m.played && m.scheduledAt">
-                    <span class="match-date">📅 <span x-text="formatDate(m.scheduledAt)"></span></span>
-                  </template>
-                  <template x-if="m.played">
-                    <span class="match-status played">✓ Изигран</span>
-                  </template>
-                  <template x-if="!isMatchLive(m) && !m.played && !m.scheduledAt">
-                    <span class="match-status pending">Чака</span>
-                  </template>
-                </div>
-                <div class="match-row">
-                  <!-- Always render the group player on the left so the eye can scan a single column -->
-                  <div class="match-player" :class="m.played ? (m.winner===g.player ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(g.player)">
-                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(g.player)}`" x-text="initials(g.player)"></span>
-                    <span class="name" x-text="g.player"></span>
-                  </div>
-                  <div class="match-score">
-                    <template x-if="m.played">
-                      <div>
-                        <span :class="(m.p1===g.player ? m.s1 : m.s2) > (m.p1===g.player ? m.s2 : m.s1) ? 's-win' : 's-loss'" x-text="m.p1===g.player ? m.s1 : m.s2"></span>
-                        <span class="score-sep">:</span>
-                        <span :class="(m.p1===g.player ? m.s2 : m.s1) > (m.p1===g.player ? m.s1 : m.s2) ? 's-win' : 's-loss'" x-text="m.p1===g.player ? m.s2 : m.s1"></span>
-                      </div>
-                    </template>
-                    <template x-if="!m.played">
-                      <span class="score-pending">vs</span>
-                    </template>
-                  </div>
-                  <div class="match-player right" :class="m.played ? (m.winner===(m.p1===g.player ? m.p2 : m.p1) ? 'winner' : 'loser') : ''" @click.stop="jumpToPlayer(m.p1===g.player ? m.p2 : m.p1)">
-                    <span class="name" x-text="m.p1===g.player ? m.p2 : m.p1"></span>
-                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(m.p1===g.player ? m.p2 : m.p1)}`" x-text="initials(m.p1===g.player ? m.p2 : m.p1)"></span>
-                  </div>
-                </div>
-                <template x-if="canWriteToday(m)">
-                  <div class="match-actions">
-                    <template x-if="isMatchLive(m)">
-                      <button class="btn-mini btn-live-mini" @click.stop="openLive(m)">🔴 Продължи на живо</button>
-                    </template>
-                    <template x-if="!isMatchLive(m)">
-                      <button class="btn-mini btn-live-mini" @click.stop="openLive(m)">🔴 На живо</button>
-                    </template>
-                    <button class="btn-mini" @click.stop="openScore(m)">🏁 Краен</button>
-                  </div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </div>
-      </template>
-    </section>
-    </template>
-
     <!-- ===== ДВУБОИ (H2H) ===== -->
     <template x-if="view === 'grid'">
     <section class="panel">
       <div class="panel-head">
         <h2>Двубои</h2>
-        <p>Резултатите на всеки срещу всеки</p>
+        <p>Подредени по точки · кликни играч за двубоите му</p>
       </div>
 
-      <!-- MOBILE: vertical expandable cards -->
+      <!-- Search bar — only when there are enough players to make scrolling
+           a problem. Below 9 players the list fits on a phone screen. -->
+      <template x-if="players.length > 8">
+        <div class="duels-search">
+          <input type="search" x-model="duelSearch" placeholder="🔍 Намери играч..." />
+          <button class="duels-search-clear" x-show="duelSearch" @click="duelSearch=''" aria-label="Изчисти">✕</button>
+        </div>
+      </template>
+
+      <!-- MOBILE: vertical expandable cards, sorted by standings -->
       <div class="duels-mobile">
-        <template x-for="p in players" :key="p">
-          <div class="duel-card" :class="{open: duelExpanded === p}">
-            <button class="duel-card-head" @click="duelExpanded = duelExpanded === p ? null : p">
-              <span class="avatar lg" :style="`--avatar-hue:${playerHue(p)}`" x-text="initials(p)"></span>
-              <div class="duel-card-info">
-                <span class="duel-card-name" x-text="p"></span>
-                <span class="duel-card-record">
-                  <span class="wl-w" x-text="h2hRowSummary(p).wins"></span><span class="wl-sep">-</span><span class="wl-l" x-text="h2hRowSummary(p).losses"></span>
-                  <span class="duel-card-points" x-text="playerPoints(p) + ' т.'"></span>
+        <template x-for="s in duelsList" :key="s.name">
+          <div class="duel-card-v2"
+               :class="{
+                 open: duelExpanded === s.name,
+                 dim: !s.played,
+                 ['podium-' + duelPodium(s, s.rank - 1)]: duelPodium(s, s.rank - 1)
+               }">
+            <button class="duel-card-head-v2" @click="duelExpanded = duelExpanded === s.name ? null : s.name">
+              <span class="duel-rank" :class="{invisible: !s.played}" x-text="s.played ? s.rank : ''"></span>
+              <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+              <div class="duel-card-info-v2">
+                <span class="duel-card-name-v2" x-text="s.name"></span>
+                <span class="duel-card-meta">
+                  <span class="wl-w" x-text="s.wins"></span><span class="wl-sep">–</span><span class="wl-l" x-text="s.losses"></span>
+                  <span class="duel-meta-sep" x-show="s.played">·</span>
+                  <span class="duel-card-points" x-show="s.played" x-text="s.points + ' т.'"></span>
+                  <span class="duel-card-empty" x-show="!s.played">няма мачове</span>
                 </span>
               </div>
-              <span class="duel-card-arrow">▾</span>
+              <div class="duel-progress" :title="'Изиграни ' + duelProgressLabel(s) + ' мача'">
+                <div class="duel-progress-fill" :style="`width: ${duelProgressRate(s) * 100}%`"></div>
+                <span class="duel-progress-label" x-text="duelProgressLabel(s)"></span>
+              </div>
+              <span class="duel-card-arrow-v2" x-text="duelExpanded === s.name ? '▴' : '▾'"></span>
             </button>
-            <div class="duel-card-body" x-show="duelExpanded === p" x-transition.duration.200ms>
-              <template x-for="op in duelOpponents(p)" :key="op">
-                <div class="duel-row" :class="duelRowClass(p, op)" @click="jumpToPlayer(op)">
-                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(op)}`" x-text="initials(op)"></span>
-                  <span class="duel-row-name" x-text="op"></span>
-                  <span class="duel-row-result" x-text="duelRowText(p, op)"></span>
+            <div class="duel-card-body-v2" x-show="duelExpanded === s.name" x-transition.duration.200ms>
+              <!-- Sticky mini-header with selected player while scrolling -->
+              <div class="duel-sticky-head">
+                <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                <span x-text="s.name"></span>
+                <span class="duel-sticky-meta">
+                  <span class="wl-w" x-text="s.wins"></span>–<span class="wl-l" x-text="s.losses"></span>
+                </span>
+              </div>
+
+              <!-- Wins -->
+              <template x-if="duelOpponentsGrouped(s.name).wins.length > 0">
+                <div class="duel-group">
+                  <div class="duel-group-head wins">
+                    <span class="dg-icon">✓</span>
+                    <span class="dg-label">Победи</span>
+                    <span class="dg-count" x-text="duelOpponentsGrouped(s.name).wins.length"></span>
+                  </div>
+                  <template x-for="op in duelOpponentsGrouped(s.name).wins" :key="'w-' + op">
+                    <div class="duel-row-v2 win" @click="jumpToPlayer(op)">
+                      <span class="avatar sm" :style="`--avatar-hue:${playerHue(op)}`" x-text="initials(op)"></span>
+                      <div class="duel-row-info">
+                        <span class="duel-row-name" x-text="op"></span>
+                        <span class="duel-row-sub" x-show="duelRowSubline(s.name, op)" x-text="duelRowSubline(s.name, op)"></span>
+                      </div>
+                      <span class="duel-row-result-v2" x-text="duelRowText(s.name, op)"></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Losses -->
+              <template x-if="duelOpponentsGrouped(s.name).losses.length > 0">
+                <div class="duel-group">
+                  <div class="duel-group-head losses">
+                    <span class="dg-icon">✗</span>
+                    <span class="dg-label">Загуби</span>
+                    <span class="dg-count" x-text="duelOpponentsGrouped(s.name).losses.length"></span>
+                  </div>
+                  <template x-for="op in duelOpponentsGrouped(s.name).losses" :key="'l-' + op">
+                    <div class="duel-row-v2 loss" @click="jumpToPlayer(op)">
+                      <span class="avatar sm" :style="`--avatar-hue:${playerHue(op)}`" x-text="initials(op)"></span>
+                      <div class="duel-row-info">
+                        <span class="duel-row-name" x-text="op"></span>
+                        <span class="duel-row-sub" x-show="duelRowSubline(s.name, op)" x-text="duelRowSubline(s.name, op)"></span>
+                      </div>
+                      <span class="duel-row-result-v2" x-text="duelRowText(s.name, op)"></span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Scheduled -->
+              <template x-if="duelOpponentsGrouped(s.name).scheduled.length > 0">
+                <div class="duel-group">
+                  <div class="duel-group-head scheduled">
+                    <span class="dg-icon">🕐</span>
+                    <span class="dg-label">Предстоящи</span>
+                    <span class="dg-count" x-text="duelOpponentsGrouped(s.name).scheduled.length"></span>
+                  </div>
+                  <template x-for="op in duelOpponentsGrouped(s.name).scheduled" :key="'s-' + op">
+                    <div class="duel-row-v2 scheduled">
+                      <span class="avatar sm" :style="`--avatar-hue:${playerHue(op)}`" x-text="initials(op)"></span>
+                      <div class="duel-row-info" @click="jumpToPlayer(op)">
+                        <span class="duel-row-name" x-text="op"></span>
+                        <span class="duel-row-sub" x-show="duelRowSubline(s.name, op)" x-text="duelRowSubline(s.name, op)"></span>
+                      </div>
+                      <template x-if="!duelCanWriteToday(s.name, op)">
+                        <span class="duel-row-result-v2" x-text="duelRowText(s.name, op)"></span>
+                      </template>
+                      <template x-if="duelCanWriteToday(s.name, op)">
+                        <button class="duel-row-cta" @click.stop="openLive(duelMatchOf(s.name, op))" title="Започни на живо">
+                          ▶ <span class="duel-cta-label">На живо</span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Pending — collapsed by default since it's usually most rows
+                   and least informative on a mature tournament. -->
+              <template x-if="duelOpponentsGrouped(s.name).pending.length > 0">
+                <div class="duel-group">
+                  <button class="duel-group-head pending toggle"
+                          @click.stop="duelPendingExpanded[s.name] = !duelPendingExpanded[s.name]">
+                    <span class="dg-icon">⚪</span>
+                    <span class="dg-label">Неизиграни</span>
+                    <span class="dg-count" x-text="duelOpponentsGrouped(s.name).pending.length"></span>
+                    <span class="dg-chevron" x-text="duelPendingExpanded[s.name] ? '▴' : '▾'"></span>
+                  </button>
+                  <div x-show="duelPendingExpanded[s.name]" x-transition.duration.150ms>
+                    <template x-for="op in duelOpponentsGrouped(s.name).pending" :key="'p-' + op">
+                      <div class="duel-row-v2 pending" @click="jumpToPlayer(op)">
+                        <span class="avatar sm" :style="`--avatar-hue:${playerHue(op)}`" x-text="initials(op)"></span>
+                        <span class="duel-row-name" x-text="op"></span>
+                      </div>
+                    </template>
+                  </div>
                 </div>
               </template>
             </div>
           </div>
         </template>
+
+        <!-- Empty state when search yields nothing -->
+        <div class="duels-empty" x-show="duelSearch && duelsList.length === 0">
+          Няма играч с име "<span x-text="duelSearch"></span>"
+        </div>
       </div>
 
-      <!-- DESKTOP: full grid -->
-      <div class="grid-wrap desktop-only">
-        <table class="h2h">
-          <thead>
-            <tr>
-              <th class="corner"></th>
-              <template x-for="p in players" :key="p">
-                <th class="col-header" :title="p" x-text="p"></th>
-              </template>
-              <th class="col-summary-head">В-З</th>
-              <th class="col-summary-head total">Точки</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="rowP in players" :key="rowP">
-              <tr>
-                <th class="row-header" @click="jumpToPlayer(rowP)">
-                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(rowP)}`" x-text="initials(rowP)"></span>
-                  <span x-text="rowP"></span>
-                </th>
-                <template x-for="colP in players" :key="colP">
-                  <td :class="cellClass(rowP, colP)" x-text="cellText(rowP, colP)" :title="cellTitle(rowP, colP)"></td>
-                </template>
-                <td class="cell-wl">
-                  <span class="wl-w" x-text="h2hRowSummary(rowP).wins"></span><span class="wl-sep">-</span><span class="wl-l" x-text="h2hRowSummary(rowP).losses"></span>
-                </td>
-                <td class="cell-points" x-text="playerPoints(rowP)"></td>
-              </tr>
-            </template>
-            <tr class="summary-row">
-              <th class="row-header total">Точки</th>
-              <template x-for="colP in players" :key="colP">
-                <td class="cell-points" x-text="playerPoints(colP)"></td>
-              </template>
-              <td class="cell-self">—</td>
-              <td class="cell-self">—</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="legend desktop-only">
-        <span><span class="lg-mark lg-win"></span>Победа</span>
-        <span><span class="lg-mark lg-loss"></span>Загуба</span>
-        <span><span class="lg-mark lg-pending"></span>Предстоящ</span>
-        <span class="legend-hint">Кликни име за подробности</span>
-      </div>
     </section>
     </template>
 
@@ -875,42 +795,141 @@
           </div>
 
           <!-- ===== Players drawer (full-width sheet) ===== -->
-          <div class="admin-menu-backdrop" x-show="adminPlayersOpen" @click="adminPlayersOpen=false" x-transition.opacity style="display:none"></div>
+          <div class="admin-menu-backdrop" x-show="adminPlayersOpen" @click="adminPlayersOpen=false; cancelEditPlayer()" x-transition.opacity style="display:none"></div>
           <div class="admin-players-drawer" x-show="adminPlayersOpen" x-transition style="display:none">
             <div class="drawer-head">
-              <h3>Играчи · <span x-text="players.length"></span></h3>
-              <button class="btn-icon" @click="adminPlayersOpen=false" aria-label="Затвори">✕</button>
+              <h3>Играчи <span class="drawer-count" x-text="players.length"></span></h3>
+              <button class="btn-icon" @click="adminPlayersOpen=false; cancelEditPlayer()" aria-label="Затвори">✕</button>
             </div>
-            <form class="add-player-row" @submit.prevent="
+
+            <!-- Add player form: input dominates, button is icon-only (compact). -->
+            <form class="add-player-form" @submit.prevent="
               const res = await addPlayer(newPlayerName);
               if (res.ok) { newPlayerName = ''; addPlayerError = ''; }
               else addPlayerError = res.error;
             ">
-              <input type="text" x-model="newPlayerName" placeholder="Ново име" maxlength="40" required />
-              <button type="submit" class="btn-primary">+ Добави</button>
+              <input type="text" x-model="newPlayerName" placeholder="Добави нов играч…" maxlength="40" required />
+              <button type="submit" class="add-player-submit" :disabled="!newPlayerName.trim()" aria-label="Добави">+</button>
             </form>
             <p class="add-player-error" x-show="addPlayerError" x-text="addPlayerError"></p>
-            <div class="players-list">
-              <template x-for="p in players" :key="p">
-                <div class="players-list-row">
-                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(p)}`"></span>
-                  <span class="players-list-name" x-text="p"></span>
-                  <button type="button" class="btn-mini" @click="
-                    const newName = prompt('Ново име за ' + p, p);
-                    if (newName && newName.trim() && newName.trim() !== p) {
-                      const res = await renamePlayer(p, newName);
-                      if (!res.ok) alert('Грешка: ' + res.error);
-                    }
-                  " title="Преименуване">✎</button>
-                  <button type="button" class="btn-mini btn-danger" @click="
-                    if (confirm('Изтрий ' + p + '? Всички мачове и резултати на този играч ще бъдат премахнати завинаги.')) {
-                      const res = await deletePlayer(p);
-                      if (!res.ok) alert('Грешка: ' + res.error);
-                    }
-                  " title="Изтрий">🗑</button>
+
+            <!-- Search — only when many players. -->
+            <template x-if="players.length > 8">
+              <div class="players-search">
+                <input type="search" x-model="playerSearch" placeholder="🔍 Намери играч..." />
+                <button class="duels-search-clear" x-show="playerSearch" @click="playerSearch=''" aria-label="Изчисти">✕</button>
+              </div>
+            </template>
+
+            <!-- Active players section -->
+            <template x-if="adminPlayersGrouped.active.length > 0">
+              <div class="players-section">
+                <div class="players-section-head">
+                  <span>Активни</span>
+                  <span class="ps-count" x-text="adminPlayersGrouped.active.length"></span>
                 </div>
-              </template>
+                <template x-for="s in adminPlayersGrouped.active" :key="'a-' + s.name">
+                  <div class="player-row" :class="{editing: playerEditing === s.name}">
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                    <!-- Display mode -->
+                    <template x-if="playerEditing !== s.name">
+                      <div class="player-row-info">
+                        <span class="player-row-name" x-text="s.name"></span>
+                        <span class="player-row-meta">
+                          <span class="wl-w" x-text="s.wins"></span>–<span class="wl-l" x-text="s.losses"></span>
+                          <span class="meta-sep">·</span>
+                          <span x-text="s.played + ' мача'"></span>
+                        </span>
+                      </div>
+                    </template>
+                    <!-- Edit mode -->
+                    <template x-if="playerEditing === s.name">
+                      <form class="player-row-edit" @submit.prevent="saveEditPlayer()">
+                        <input type="text" x-model="playerEditValue" maxlength="40"
+                               @keydown.escape.prevent="cancelEditPlayer()" />
+                        <button type="submit" class="row-icon-btn save" :disabled="!playerEditValue.trim() || playerEditValue.trim() === s.name" aria-label="Запази">✓</button>
+                        <button type="button" class="row-icon-btn cancel" @click="cancelEditPlayer()" aria-label="Откажи">✕</button>
+                      </form>
+                    </template>
+                    <!-- Action buttons (hidden during edit) -->
+                    <template x-if="playerEditing !== s.name">
+                      <div class="player-row-actions">
+                        <button type="button" class="row-icon-btn" @click="startEditPlayer(s.name)" title="Преименуване" aria-label="Преименуване">✎</button>
+                        <button type="button" class="row-icon-btn danger" @click="confirmDeletePlayer(s.name)" title="Изтрий" aria-label="Изтрий">🗑</button>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <p class="player-row-error" x-show="playerEditError && playerEditing && adminPlayersGrouped.active.some(s => s.name === playerEditing)" x-text="playerEditError"></p>
+              </div>
+            </template>
+
+            <!-- Inactive players section -->
+            <template x-if="adminPlayersGrouped.inactive.length > 0">
+              <div class="players-section">
+                <div class="players-section-head">
+                  <span>Без мачове</span>
+                  <span class="ps-count" x-text="adminPlayersGrouped.inactive.length"></span>
+                </div>
+                <template x-for="s in adminPlayersGrouped.inactive" :key="'i-' + s.name">
+                  <div class="player-row dim" :class="{editing: playerEditing === s.name}">
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                    <template x-if="playerEditing !== s.name">
+                      <div class="player-row-info">
+                        <span class="player-row-name" x-text="s.name"></span>
+                        <span class="player-row-meta empty">няма мачове</span>
+                      </div>
+                    </template>
+                    <template x-if="playerEditing === s.name">
+                      <form class="player-row-edit" @submit.prevent="saveEditPlayer()">
+                        <input type="text" x-model="playerEditValue" maxlength="40"
+                               @keydown.escape.prevent="cancelEditPlayer()" />
+                        <button type="submit" class="row-icon-btn save" :disabled="!playerEditValue.trim() || playerEditValue.trim() === s.name" aria-label="Запази">✓</button>
+                        <button type="button" class="row-icon-btn cancel" @click="cancelEditPlayer()" aria-label="Откажи">✕</button>
+                      </form>
+                    </template>
+                    <template x-if="playerEditing !== s.name">
+                      <div class="player-row-actions">
+                        <button type="button" class="row-icon-btn" @click="startEditPlayer(s.name)" title="Преименуване" aria-label="Преименуване">✎</button>
+                        <button type="button" class="row-icon-btn danger" @click="confirmDeletePlayer(s.name)" title="Изтрий" aria-label="Изтрий">🗑</button>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <p class="player-row-error" x-show="playerEditError && playerEditing && adminPlayersGrouped.inactive.some(s => s.name === playerEditing)" x-text="playerEditError"></p>
+              </div>
+            </template>
+
+            <!-- Empty search -->
+            <div class="duels-empty" x-show="playerSearch && adminPlayersGrouped.active.length === 0 && adminPlayersGrouped.inactive.length === 0">
+              Няма играч с име "<span x-text="playerSearch"></span>"
             </div>
+          </div>
+
+          <!-- ===== Delete-player confirmation sheet ===== -->
+          <div class="admin-menu-backdrop" x-show="playerDeleting" @click="cancelDeletePlayer()" x-transition.opacity style="display:none"></div>
+          <div class="player-delete-sheet" x-show="playerDeleting" x-transition style="display:none">
+            <template x-if="playerDeleting">
+              <div>
+                <div class="admin-menu-handle"></div>
+                <div class="player-delete-icon">⚠️</div>
+                <h3 class="player-delete-title">
+                  Изтрий <span x-text="playerDeleting.name"></span>?
+                </h3>
+                <p class="player-delete-msg" x-show="playerDeleting.played > 0">
+                  Този играч има <strong x-text="playerDeleting.played"></strong>
+                  <span x-text="playerDeleting.played === 1 ? 'изигран мач' : 'изиграни мача'"></span> —
+                  всички резултати ще бъдат премахнати <strong>завинаги</strong>.
+                </p>
+                <p class="player-delete-msg muted" x-show="playerDeleting.played === 0">
+                  Този играч няма изиграни мачове.
+                </p>
+                <div class="player-delete-actions">
+                  <button class="btn-ghost" @click="cancelDeletePlayer()">Откажи</button>
+                  <button class="btn-danger-solid" @click="executeDeletePlayer()">Изтрий</button>
+                </div>
+              </div>
+            </template>
           </div>
 
           <!-- ===== Match actions bottom sheet ===== -->
@@ -951,15 +970,11 @@
       <span class="nav-label">Предстоящи</span>
       <span class="nav-badge" x-show="activeScheduledMatches.length > 0" x-text="activeScheduledMatches.length"></span>
     </button>
-    <button :class="{active: view==='matches'}" @click="view='matches'; matchPlayerFilter=''; matchSearch=''; matchFilter='all'">
-      <span class="nav-icon">🎾</span>
-      <span class="nav-label">Мачове</span>
-    </button>
     <button :class="{active: view==='grid'}" @click="view='grid'">
       <span class="nav-icon">⚔️</span>
       <span class="nav-label">Двубои</span>
     </button>
-    <button :class="{active: view==='admin'}" @click="view='admin'; matchFilter='scheduled'">
+    <button :class="{active: view==='admin'}" @click="view='admin'">
       <span class="nav-icon" x-text="isAdmin ? '🔓' : '🔒'"></span>
       <span class="nav-label">Админ</span>
     </button>

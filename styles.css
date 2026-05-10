@@ -347,7 +347,7 @@ main {
 .upcoming-group-head {
   font-size: 12px;
   font-weight: 800;
-  color: var(--accent-2);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 1.4px;
   padding: 0 4px 10px;
@@ -355,7 +355,51 @@ main {
   margin-bottom: 12px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+.upcoming-group-head .ug-icon { font-size: 14px; }
+.upcoming-group-head .ug-title { flex: 1; }
+.upcoming-group-head .ug-count {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+/* Hero treatment for the "today" group: bigger heading, accent color. */
+.upcoming-group.hero .upcoming-group-head {
+  color: var(--accent-2);
+  font-size: 13px;
+  letter-spacing: 1.6px;
+}
+.upcoming-group.hero .upcoming-group-head .ug-count {
+  color: #1a1100;
+  background: var(--accent);
+}
+/* Today cards stand out via stronger border + soft glow + larger inner padding. */
+.upcoming-card.is-hero {
+  border-color: var(--accent-3);
+  background: linear-gradient(180deg, rgba(212,175,55,0.06), var(--bg-0));
+  box-shadow: 0 4px 20px rgba(212,175,55,0.08), var(--shadow-sm);
+  padding: 18px;
+}
+.upcoming-card.is-hero::before {
+  width: 4px;
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+}
+/* Countdown line — small dim text below the date row. */
+.upcoming-countdown {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--text-faint);
+  margin: -8px 0 12px;
+  text-transform: uppercase;
+}
+.upcoming-card.is-hero .upcoming-countdown {
+  color: var(--accent-2);
 }
 .upcoming-card {
   background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
@@ -436,6 +480,25 @@ main {
   font-size: 16px;
   color: var(--text-faint);
   letter-spacing: 1px;
+}
+/* Long player names ("Лебанов", "Карабожиков") get clipped on narrow phones
+   with the side-by-side layout. Stack the name under the avatar so the full
+   name is always readable. */
+@media (max-width: 400px) {
+  .upcoming-player {
+    flex-direction: column;
+    text-align: center;
+    gap: 6px;
+    font-size: 13px;
+    padding: 4px 2px;
+  }
+  .upcoming-player.right { flex-direction: column; }
+  .upcoming-name {
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.2;
+    text-align: center;
+  }
 }
 
 /* ===== EMPTY STATES ===== */
@@ -716,12 +779,24 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 
 /* ===== ДВУБОИ — MOBILE expandable cards ===== */
 .duels-mobile { display: flex; flex-direction: column; gap: 8px; }
+/* Legacy desktop-only H2H matrix is retired — the responsive cards work on
+   every viewport. The class is kept here as a no-op so any stale ?ref=
+   bookmark with the old class doesn't render unstyled blobs. */
 .desktop-only { display: none !important; }
 
-@media (min-width: 768px) {
-  .duels-mobile { display: none; }
-  .desktop-only { display: block !important; }
-  .legend.desktop-only { display: flex !important; }
+/* On wider screens, lay out cards in a multi-column grid so wide monitors
+   don't get a stretched single column. Cards remain self-contained — the
+   expanded body lives within the column, no row-spanning quirks. */
+@media (min-width: 720px) {
+  .duels-mobile {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: start;  /* expanded card grows down without stretching siblings */
+  }
+}
+@media (min-width: 1100px) {
+  .duels-mobile { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .duel-card {
@@ -1245,7 +1320,9 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   position: fixed;
   left: 0; right: 0; bottom: 0;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* Adapts to actual button count (4 after Мачове was merged into Двубои). */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   background: rgba(14,28,20,0.92);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -2877,6 +2954,658 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 }
 
 /* ===========================================================
+   Standings v2 — leaderboard-first, calmer hero, card rows
+   =========================================================== */
+
+/* Hero: title still visible but compact (≈ half the prior height). The
+   tournament-progress strip below carries the "where are we" answer. */
+.hero.hero-compact {
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 16px 6px;
+}
+.hero.hero-compact .hero-title {
+  font-size: clamp(20px, 4.5vw, 26px);
+}
+
+.tournament-progress {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tp-bar {
+  position: relative;
+  height: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  overflow: hidden;
+}
+.tp-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent), var(--accent-3));
+  border-radius: 100px;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 12px rgba(212,175,55,0.30);
+}
+.tp-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+.tp-pct {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 16px;
+  color: var(--accent-2);
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.tp-frac { font-weight: 600; }
+
+.panel-head.panel-head-compact {
+  padding: 16px 0 8px;
+}
+.panel-head.panel-head-compact h2 { font-size: 28px; }
+.panel-head.panel-head-compact p { font-size: 12px; margin-top: 2px; }
+
+.standings-search {
+  position: relative;
+  margin-bottom: 12px;
+}
+.standings-search input {
+  width: 100%;
+  padding: 11px 40px 11px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: inherit;
+}
+.standings-search input::placeholder { color: var(--text-faint); }
+.standings-search input:focus { outline: none; border-color: var(--accent); }
+
+/* List rows replace the old <table> — much friendlier on mobile and lets
+   us put the W-L / sets / progress on a sub-line where they don't crowd. */
+.standings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.standings-row {
+  display: grid;
+  grid-template-columns: 28px 32px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  position: relative;
+}
+.standings-row:hover, .standings-row:active { background: var(--bg-2); }
+.standings-row.podium-gold,
+.standings-row.podium-silver,
+.standings-row.podium-bronze {
+  border-color: rgba(232,216,168,0.18);
+  padding-left: 16px;
+}
+.standings-row.podium-gold::before,
+.standings-row.podium-silver::before,
+.standings-row.podium-bronze::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: 12px 0 0 12px;
+}
+.standings-row.podium-gold::before   { background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); }
+.standings-row.podium-silver::before { background: linear-gradient(180deg, var(--silver-1), var(--silver-2)); }
+.standings-row.podium-bronze::before { background: linear-gradient(180deg, var(--bronze-1), var(--bronze-2)); }
+
+.sr-rank {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.standings-row.podium-gold .sr-rank   { color: var(--gold-1); }
+.standings-row.podium-silver .sr-rank { color: var(--silver-1); }
+.standings-row.podium-bronze .sr-rank { color: var(--bronze-1); }
+
+.sr-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sr-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sr-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.sr-meta .wl-w { color: var(--win); font-weight: 800; }
+.sr-meta .wl-l { color: var(--loss); font-weight: 800; }
+.sr-meta-sep { color: var(--text-faint); }
+.sr-sets { color: var(--text-2); font-weight: 600; }
+.sr-progress { color: var(--text-faint); font-weight: 600; }
+
+.sr-points {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 36px;
+}
+.sr-points-val {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--accent-2);
+  font-weight: 800;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.sr-points-label {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-top: 1px;
+}
+
+.sr-chev {
+  color: var(--text-faint);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+/* Inactive (0-played) section — separator + dim rows. */
+.standings-inactive { margin-top: 16px; }
+.standings-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 4px 10px;
+}
+.standings-sep .ss-line {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.standings-sep .ss-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.standings-row.dim {
+  opacity: 0.55;
+  background: transparent;
+}
+.standings-row.dim .sr-meta { font-style: italic; color: var(--text-faint); }
+
+/* Compact recent results — one-liner per match in a collapsible details. */
+.recent-section {
+  margin-top: 20px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.recent-section[open] { background: var(--bg-1); }
+.recent-section-head {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.recent-section-head::-webkit-details-marker { display: none; }
+.recent-section[open] .recent-section-head { border-bottom: 1px solid var(--line); }
+.recent-section .rs-icon { font-size: 14px; }
+.recent-section .rs-title { flex: 1; }
+.recent-section .rs-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.recent-section .rs-chevron {
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: transform 0.2s ease;
+}
+.recent-section[open] .rs-chevron { transform: rotate(180deg); }
+.recent-section-body {
+  padding: 4px 12px 10px;
+}
+.recent-section .rr-date-sep {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-faint);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  padding: 8px 4px 4px;
+}
+.recent-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+}
+.recent-line:hover, .recent-line:active { background: var(--bg-2); }
+.recent-line .rl-winner { font-weight: 700; color: var(--accent-2); flex-shrink: 0; }
+.recent-line .rl-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  color: var(--win);
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.recent-line .rl-loser { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Podium with extra stats line. */
+.podium-stats {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.podium-stats .wl-w { color: var(--win); font-weight: 800; }
+.podium-stats .wl-l { color: var(--loss); font-weight: 800; }
+.podium-progress {
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.podium-spot.p1 .podium-stats { font-size: 12px; }
+
+/* Tablet+: row gets a touch more padding for breathing room */
+@media (min-width: 720px) {
+  .standings-row { padding: 12px 16px; }
+  .sr-name { font-size: 15px; }
+  /* Cap single-column elements on wide screens so they don't stretch into
+     awkward landscape rows. Cards in Двубои use the multi-column grid. */
+  .standings-list,
+  .standings-inactive,
+  .standings-search,
+  .recent-section,
+  .panel-head.panel-head-compact {
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* Podium gets a bit more breathing room — keep centered. */
+  .podium { max-width: 720px; margin-left: auto; margin-right: auto; }
+}
+
+/* ===========================================================
+   Duels v2 — standings-ordered, grouped, with podium accents
+   =========================================================== */
+
+.duels-search {
+  position: relative;
+  margin-bottom: 12px;
+}
+.duels-search input {
+  width: 100%;
+  padding: 11px 40px 11px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: inherit;
+}
+.duels-search input::placeholder { color: var(--text-faint); }
+.duels-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.duels-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.duel-card-v2 {
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+  position: relative;
+}
+.duel-card-v2.dim { opacity: 0.55; }
+.duel-card-v2.open { border-color: var(--line-strong); }
+
+/* Podium accents — 4 px left bar in metallic colors */
+.duel-card-v2.podium-gold,
+.duel-card-v2.podium-silver,
+.duel-card-v2.podium-bronze {
+  border-color: rgba(232,216,168,0.18);
+}
+.duel-card-v2.podium-gold::before,
+.duel-card-v2.podium-silver::before,
+.duel-card-v2.podium-bronze::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-radius: 14px 0 0 14px;
+}
+.duel-card-v2.podium-gold::before   { background: linear-gradient(180deg, var(--gold-1), var(--gold-2)); }
+.duel-card-v2.podium-silver::before { background: linear-gradient(180deg, var(--silver-1), var(--silver-2)); }
+.duel-card-v2.podium-bronze::before { background: linear-gradient(180deg, var(--bronze-1), var(--bronze-2)); }
+
+.duel-card-head-v2 {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 32px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.duel-card-head-v2:hover { background: rgba(255,255,255,0.02); }
+
+.duel-rank {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  width: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.duel-rank.invisible { visibility: hidden; }
+.duel-card-v2.podium-gold .duel-rank   { color: var(--gold-1); }
+.duel-card-v2.podium-silver .duel-rank { color: var(--silver-1); }
+.duel-card-v2.podium-bronze .duel-rank { color: var(--bronze-1); }
+
+.duel-card-info-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.duel-card-name-v2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.duel-card-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.duel-card-meta .wl-w { color: var(--win); font-weight: 800; }
+.duel-card-meta .wl-l { color: var(--loss); font-weight: 800; }
+.duel-card-meta .wl-sep { color: var(--text-faint); }
+.duel-meta-sep { color: var(--text-faint); }
+.duel-card-points { color: var(--accent-2); font-weight: 700; }
+.duel-card-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* Match-completion progress: a stylized pill with a fill bar plus an
+   inline "5 / 19" label so the user sees both the proportion (visual) and
+   the exact count (numeric) without having to interpret the bar. */
+.duel-progress {
+  position: relative;
+  width: 64px;
+  height: 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.duel-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(212,175,55,0.30), rgba(212,175,55,0.18));
+  border-radius: 100px 0 0 100px;
+  transition: width 0.3s ease;
+}
+.duel-progress-label {
+  position: relative;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-2);
+  letter-spacing: 0.3px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.duel-card-v2.dim .duel-progress-fill { background: rgba(255,255,255,0.04); }
+.duel-card-v2.dim .duel-progress-label { color: var(--text-faint); }
+
+.duel-card-arrow-v2 {
+  color: var(--text-faint);
+  font-size: 14px;
+  margin-left: 2px;
+}
+
+/* Expanded body */
+.duel-card-body-v2 {
+  border-top: 1px solid var(--line);
+  background: var(--bg-0);
+}
+.duel-sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(22,38,28,0.95);
+  backdrop-filter: blur(6px);
+  font-size: 13px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--line);
+}
+.duel-sticky-head .duel-sticky-meta {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.duel-sticky-head .duel-sticky-meta .wl-w { color: var(--win); font-weight: 800; }
+.duel-sticky-head .duel-sticky-meta .wl-l { color: var(--loss); font-weight: 800; }
+
+.duel-group + .duel-group { margin-top: 4px; }
+.duel-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+.duel-group-head.wins { color: var(--win); }
+.duel-group-head.losses { color: var(--loss); }
+.duel-group-head.scheduled { color: var(--warn); }
+.duel-group-head.pending.toggle { cursor: pointer; }
+.duel-group-head.pending.toggle:hover { background: rgba(255,255,255,0.02); }
+.dg-icon { font-size: 13px; }
+.dg-label { letter-spacing: 1px; }
+.dg-count {
+  margin-left: auto;
+  font-size: 10px;
+  background: var(--bg-2);
+  color: var(--text-dim);
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.duel-group-head.toggle .dg-count { margin-left: auto; margin-right: 6px; }
+.dg-chevron { color: var(--text-faint); font-size: 11px; }
+
+.duel-row-v2 {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-bottom: 1px solid rgba(255,255,255,0.02);
+}
+.duel-row-v2:last-child { border-bottom: 0; }
+.duel-row-v2:hover, .duel-row-v2:active { background: rgba(255,255,255,0.03); }
+.duel-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.duel-row-v2 .duel-row-name {
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.duel-row-v2 .duel-row-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.2px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.duel-row-v2.pending .duel-row-name { color: var(--text-faint); }
+.duel-row-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, var(--win), #5fa86a);
+  color: #0a1f0e;
+  border: 1px solid var(--win);
+  border-radius: 8px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(126,211,134,0.30);
+}
+.duel-row-cta:active { transform: scale(0.97); }
+.duel-cta-label {
+  /* hidden on very narrow screens — leave just the ▶ icon */
+}
+@media (max-width: 360px) {
+  .duel-cta-label { display: none; }
+}
+.duel-row-result-v2 {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+}
+.duel-row-v2.win .duel-row-result-v2 { color: var(--win); }
+.duel-row-v2.loss .duel-row-result-v2 { color: var(--loss); }
+.duel-row-v2.scheduled .duel-row-result-v2 {
+  color: var(--warn);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* Empty search results */
+.duels-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 14px;
+}
+
+/* Tablet+ — slightly tighter card density */
+@media (min-width: 720px) {
+  .duel-card-head-v2 { padding: 12px 14px; }
+  .duel-card-name-v2 { font-size: 16px; }
+}
+
+/* ===========================================================
    Admin panel v2 — task-centric, progressive disclosure
    =========================================================== */
 
@@ -3291,7 +4020,7 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 }
 .admin-about-sheet .btn-ghost.full { margin: 4px 8px; }
 
-/* --- Players drawer --- */
+/* --- Players drawer (v2) --- */
 .admin-players-drawer {
   max-height: 90vh;
   padding-top: 4px;
@@ -3306,16 +4035,280 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   font-size: 18px;
   font-weight: 800;
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
-.admin-players-drawer .add-player-row { padding: 0 6px; }
-.admin-players-drawer .add-player-error { padding: 0 6px; }
-.admin-players-drawer .players-list {
-  margin-top: 12px;
-  border-top: 1px solid var(--line);
-  padding: 8px 6px 0;
+.drawer-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  padding: 3px 9px;
+  border-radius: 100px;
+  letter-spacing: 0.3px;
+}
+
+/* Add-player form: input dominates, button is a compact icon (no more
+   yellow brick taking 50% of the row). */
+.add-player-form {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  padding: 0 6px;
+}
+.add-player-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 16px;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.add-player-form input::placeholder { color: var(--text-faint); }
+.add-player-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-1);
+}
+.add-player-submit {
+  width: 44px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent-3));
+  color: #1a1100;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 2px 10px var(--accent-glow);
+  transition: transform 0.1s ease;
+}
+.add-player-submit:active:not(:disabled) { transform: scale(0.95); }
+.add-player-submit:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.players-search {
+  position: relative;
+  margin: 12px 6px 6px;
+}
+.players-search input {
+  width: 100%;
+  padding: 10px 38px 10px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: inherit;
+}
+.players-search input:focus { outline: none; border-color: var(--accent); }
+.players-search .duels-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.players-section { margin-top: 10px; padding: 0 6px; }
+.players-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ps-count {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--text-faint);
+  background: var(--bg-2);
+  padding: 2px 7px;
+  border-radius: 100px;
+  letter-spacing: 0.4px;
+}
+
+.player-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 4px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.player-row.editing { border-color: var(--accent); background: var(--bg-1); }
+.player-row.dim:not(.editing) { opacity: 0.65; }
+.player-row-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 1px;
+}
+.player-row-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-row-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.player-row-meta .wl-w { color: var(--win); font-weight: 800; }
+.player-row-meta .wl-l { color: var(--loss); font-weight: 800; }
+.player-row-meta .meta-sep { color: var(--text-faint); }
+.player-row-meta.empty { font-style: italic; color: var(--text-faint); }
+
+.player-row-actions {
+  display: flex;
   gap: 4px;
+  flex-shrink: 0;
+}
+.row-icon-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.row-icon-btn:hover { background: var(--bg-3); color: var(--text); }
+.row-icon-btn:active { transform: scale(0.94); }
+.row-icon-btn.danger { color: var(--loss); background: var(--loss-bg); border-color: rgba(224,124,138,0.2); }
+.row-icon-btn.danger:hover { background: rgba(224,124,138,0.18); }
+.row-icon-btn.save {
+  background: linear-gradient(135deg, var(--win), #5fa86a);
+  color: #0a1f0e;
+  border-color: var(--win);
+  font-weight: 900;
+}
+.row-icon-btn.save:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+.row-icon-btn.cancel { background: var(--bg-2); }
+
+/* Inline edit form: input + save + cancel laid out horizontally, replaces
+   the static name + actions during edit. */
+.player-row-edit {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.player-row-edit input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.player-row-edit input:focus { outline: none; box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.player-row-error {
+  color: var(--loss);
+  font-size: 12px;
+  margin: 4px 6px 0;
+  padding: 0;
+}
+
+/* Custom delete confirmation — replaces the bland confirm() with an
+   information-rich sheet showing match-count consequences. */
+.player-delete-sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 62;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-strong);
+  border-radius: 18px 18px 0 0;
+  padding: 8px 18px calc(20px + env(safe-area-inset-bottom, 0px));
+  box-shadow: var(--shadow-xl);
+  text-align: center;
+}
+.player-delete-icon {
+  font-size: 36px;
+  margin-top: 6px;
+}
+.player-delete-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 6px 0 8px;
+}
+.player-delete-title span { color: var(--loss); }
+.player-delete-msg {
+  font-size: 14px;
+  color: var(--text-2);
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+.player-delete-msg.muted { color: var(--text-dim); }
+.player-delete-msg strong { color: var(--text); }
+.player-delete-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.player-delete-actions .btn-ghost {
+  padding: 12px 16px;
+  font-weight: 700;
+  font-size: 14px;
+  border-radius: 12px;
+}
+.btn-danger-solid {
+  padding: 12px 16px;
+  background: linear-gradient(135deg, var(--loss), #b85563);
+  color: #fff;
+  border: 1px solid var(--loss);
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(224,124,138,0.30);
+  transition: transform 0.1s ease;
+}
+.btn-danger-solid:active { transform: scale(0.97); }
+
+@media (min-width: 720px) {
+  .player-delete-sheet {
+    left: 50%; right: auto; bottom: 32px;
+    transform: translateX(-50%);
+    width: min(420px, 92vw);
+    border-radius: 18px;
+    border: 1px solid var(--line-strong);
+  }
 }
 
 /* --- Match actions sheet --- */
