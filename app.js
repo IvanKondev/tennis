@@ -79,7 +79,7 @@ document.addEventListener('alpine:init', () => {
     timePresets: [
       '09:00','09:30','10:00','10:30','11:00','11:30','12:00','12:30',
       '13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30',
-      '17:00','17:30','18:00'
+      '17:00','17:30','18:00','18:30','19:00','19:30'
     ],
 
     playerPicker: {
@@ -1516,11 +1516,15 @@ document.addEventListener('alpine:init', () => {
       // truth, one navigation target.
       this.duelExpanded = name;
       this.view = 'grid';
-      // Scroll to top — the watcher does it, but if already on `grid` view
-      // the watcher won't fire.
+      // Double-RAF so Alpine has rendered the grid view and applied the `open`
+      // class before we measure. Instant scroll (no smooth) — a smooth scroll
+      // can keep animating after the user taps a different tab, "leaking" the
+      // scroll across views.
       requestAnimationFrame(() => {
-        const el = document.querySelector('.duel-card-v2.open');
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        requestAnimationFrame(() => {
+          const el = document.querySelector('.duel-card-v2.open');
+          if (el) el.scrollIntoView({ block: 'start' });
+        });
       });
     },
 
