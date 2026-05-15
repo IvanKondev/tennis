@@ -1288,13 +1288,23 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
     padding: 0 12px;
   }
   .push-bell-icon { font-size: 13px; }
-}
-/* Very small screens (iPhone SE etc.) — keep icon visible but hide the long
-   "Известията са ВКЛ" label so the pill doesn't collide with the hero title.
-   The icon alone (✓ / 🔔) plus the green color still tells the story. */
-@media (max-width: 380px) {
-  .push-bell.subscribed .push-bell-label { display: none; }
-  .push-bell.subscribed { padding: 0 10px; }
+  /* On any mobile width: collapse the subscribed pill to a compact "✓ ВКЛ"
+     badge so it doesn't overlap the hero title. The off-state keeps its full
+     CTA ("🔔 Включи известия") — that label is what gets users to subscribe
+     in the first place, worth the space. */
+  .push-bell.subscribed .push-bell-label::after {
+    content: 'ВКЛ';
+  }
+  .push-bell.subscribed .push-bell-label {
+    font-size: 0;     /* hide the long Bulgarian text */
+    margin-left: 2px;
+  }
+  .push-bell.subscribed .push-bell-label::after {
+    font-size: 12px;  /* show only "ВКЛ" */
+    font-weight: 800;
+    letter-spacing: 0.5px;
+  }
+  .push-bell.subscribed { padding: 0 11px; }
 }
 
 .btn-icon {
