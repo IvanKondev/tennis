@@ -101,6 +101,7 @@ Don't "fix" these without explicit user request — each was a deliberate scale-
 - **Plain-text admin password in env var** (paired with timing-safe compare server-side and short-lived session token client-side — never the password itself in storage). Standard 12-factor.
 - **No multi-user / RBAC.** One shared admin role is the right size for a hobby league.
 - **Polling, not WebSocket/SSE.** 5–10 s lag is fine for casual live scoring; real-time push is not worth the ops complexity.
+- **Push UI is a single pill button (`.push-bell` in styles.css), not a settings panel.** State is reflected by label+color, not iconography alone (🔕 was confusing). Off-state pulses 3× to draw attention; subscribed-state collapses to compact `✓ ВКЛ` on mobile so it doesn't fight the hero title.
 - **Cyrillic in keys/strings everywhere.** UTF-8 is the source of truth. Don't transliterate.
 - **No staging environment.** Small PRs + tested rollback path is sufficient at this scale.
 
