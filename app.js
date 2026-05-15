@@ -2498,10 +2498,26 @@ document.addEventListener('alpine:init', () => {
       }
       if (!this.push.vapidKey) throw new Error('Сървърът не е готов за push.');
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: this._urlBase64ToUint8Array(this.push.vapidKey)
-      });
+      let sub;
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: this._urlBase64ToUint8Array(this.push.vapidKey)
+        });
+      } catch (e) {
+        // pushManager.subscribe failures are almost always browser/network,
+        // not our bug. Give the user actionable next steps based on the
+        // error string the browser surfaces.
+        console.error('[push] subscribe failed', e);
+        const raw = (e && (e.message || e.name)) || '';
+        if (/push service/i.test(raw) || /registration failed/i.test(raw)) {
+          throw new Error('Браузърът блокира push услугата. В Brave: Settings → Privacy → "Use Google services for push messaging" → ON. Или пробвай Firefox / Chrome.');
+        }
+        if (/permission/i.test(raw)) {
+          throw new Error('Известията са блокирани. Разрешете ги от настройките на сайта в браузъра.');
+        }
+        throw new Error('Push регистрация неуспешна: ' + raw);
+      }
       const subJson = sub.toJSON();
       const r = await fetch('/api/push/subscribe', {
         method: 'POST',
