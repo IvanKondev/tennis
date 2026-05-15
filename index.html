@@ -94,6 +94,23 @@
     ✨ Налична е нова версия — кликни за обнова
   </div>
 
+  <!-- Push-notifications toggle (bell). Hidden if browser doesn't support
+       Web Push or the server has push disabled. Single button — tap to
+       subscribe, tap again to unsubscribe. Permission-denied state shows a
+       struck-through bell to signal the user must unblock in browser settings. -->
+  <button class="push-bell"
+          x-show="push.supported"
+          :class="{ subscribed: push.subscribed, denied: push.permission === 'denied', pending: push.pending }"
+          :disabled="push.pending"
+          @click="togglePush()"
+          :title="push.permission === 'denied' ? 'Известията са блокирани в браузъра' : (push.subscribed ? 'Спри известията' : 'Получавай известия за мачове на живо')"
+          :aria-label="push.subscribed ? 'Спри известията' : 'Включи известията'"
+          x-cloak>
+    <span x-show="!push.subscribed && push.permission !== 'denied'">🔔</span>
+    <span x-show="push.subscribed">🔕</span>
+    <span x-show="push.permission === 'denied'">🚫</span>
+  </button>
+
   <!-- HERO (compact, only on standings) -->
   <header class="hero hero-compact" x-show="view === 'standings'">
     <h1 class="hero-title">

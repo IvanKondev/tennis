@@ -226,3 +226,52 @@ test('Non-admin without schedule → 403 not match day', async () => {
   });
   assert.equal(r.status, 403);
 });
+
+// --------------------------------------------------------------------------
+// /api/push/* — VAPID key + subscribe/unsubscribe
+//
+// These run regardless of whether the test process has VAPID env vars set:
+// if push is disabled, the vapid endpoint returns 404 and subscribe returns 503.
+// If enabled (e.g. via .env), full subscribe/unsubscribe round-trip is exercised.
+// --------------------------------------------------------------------------
+test('GET /api/push/vapid-public-key → 200 with key (or 404 if disabled)', async () => {
+  const r = await request('GET', '/api/push/vapid-public-key');
+  if (r.status === 404) {
+    // push disabled: nothing else to test here
+    return;
+  }
+  assert.equal(r.status, 200);
+  assert.equal(typeof r.json.publicKey, 'string');
+  assert.ok(r.json.publicKey.length > 0);
+});
+
+test('POST /api/push/subscribe rejects malformed body', async () => {
+  const r = await request('POST', '/api/push/subscribe', { body: { foo: 'bar' } });
+  // Either 503 (push disabled) or 400 (push enabled, body invalid).
+  assert.ok(r.status === 400 || r.status === 503, 'unexpected status: ' + r.status);
+});
+
+test('POST /api/push/subscribe + unsubscribe round-trip (when push enabled)', async () => {
+  const vk = await request('GET', '/api/push/vapid-public-key');
+  if (vk.status === 404) return;  // push disabled — skip
+  const fakeEndpoint = 'https://example.com/push/' + Date.now();
+  const sub = {
+    endpoint: fakeEndpoint,
+    keys: { p256dh: 'BPLACEHOLDER', auth: 'AUTH_PLACEHOLDER' }
+  };
+  const s = await request('POST', '/api/push/subscribe', { body: sub });
+  assert.equal(s.status, 200);
+  // Idempotent: same endpoint twice → still 200, no duplicate.
+  const s2 = await request('POST', '/api/push/subscribe', { body: sub });
+  assert.equal(s2.status, 200);
+  // Unsubscribe
+  const u = await request('POST', '/api/push/unsubscribe', { body: { endpoint: fakeEndpoint } });
+  assert.equal(u.status, 200);
+});
+
+test('POST /api/push/unsubscribe missing endpoint → 400 (when push enabled)', async () => {
+  const vk = await request('GET', '/api/push/vapid-public-key');
+  if (vk.status === 404) return;
+  const r = await request('POST', '/api/push/unsubscribe', { body: {} });
+  assert.equal(r.status, 400);
+});

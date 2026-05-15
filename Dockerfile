@@ -6,7 +6,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# No npm dependencies — server uses only Node built-ins
+# Single npm dependency: web-push (RFC 8291 push encryption + VAPID).
+# Installed first so its layer is cached when application code changes.
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
+
 COPY server.js data.js ./
 
 # Static frontend lives in public/

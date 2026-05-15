@@ -5,6 +5,19 @@ const crypto = require('crypto');
 const zlib = require('zlib');
 const { PLAYERS } = require('./data.js');
 
+// Tiny .env loader — only KEY=VALUE lines, no quoting, no expansion. Avoids
+// the dotenv dep. Existing process.env values win (so docker/coolify env
+// stays authoritative in prod).
+(function loadDotEnv() {
+  const f = path.join(__dirname, '.env');
+  if (!fs.existsSync(f)) return;
+  for (const line of fs.readFileSync(f, 'utf-8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/i);
+    if (!m) continue;
+    if (process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+  }
+})();
+
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const DATA_FILE = path.join(DATA_DIR, 'tennis.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -245,7 +258,91 @@ function readData() {
   if (!d.live) d.live = {};
   if (!d.resultsRecordedAt) d.resultsRecordedAt = {};
   if (!Array.isArray(d.players) || d.players.length === 0) d.players = PLAYERS.slice();
+  if (!Array.isArray(d.pushSubscriptions)) d.pushSubscriptions = [];
   return d;
+}
+
+// ===== Web Push =====
+//
+// VAPID-authenticated push to the browser's push service (FCM/Mozilla/Apple).
+// Subscriptions are stored in tennis.json under `pushSubscriptions` keyed by
+// the unique endpoint URL. Stale subscriptions (410 Gone / 404) are pruned
+// lazily after each send. Push send is fire-and-forget — request handlers
+// never await it, so a slow push service can't block live-scoring response.
+let webpush = null;
+let pushEnabled = false;
+try {
+  webpush = require('web-push');
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+      process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+    pushEnabled = true;
+  } else {
+    log.warn('push: VAPID keys not set — push notifications disabled');
+  }
+} catch (e) {
+  log.warn('push: web-push module not available — push disabled', { err: e.message });
+}
+
+// Remove subscriptions whose endpoint matches one of `deadEndpoints`. Persists
+// only if anything changed. Called from sendPushToAll after a batch.
+function pruneSubscriptions(deadEndpoints) {
+  if (!deadEndpoints || deadEndpoints.size === 0) return;
+  const data = readData();
+  const before = data.pushSubscriptions.length;
+  data.pushSubscriptions = data.pushSubscriptions.filter(s => !deadEndpoints.has(s.endpoint));
+  if (data.pushSubscriptions.length !== before) {
+    writeData(data);
+    log.info('push: pruned dead subscriptions', { removed: before - data.pushSubscriptions.length });
+  }
+}
+
+// Send a notification to every current subscriber. Fire-and-forget: returns
+// a promise that the caller can ignore. Payload should be a small object —
+// stringified to JSON, decrypted by the SW push handler.
+function sendPushToAll(payload) {
+  if (!pushEnabled) return Promise.resolve();
+  const subs = readData().pushSubscriptions;
+  if (subs.length === 0) return Promise.resolve();
+  const body = JSON.stringify(payload);
+  const dead = new Set();
+  return Promise.all(subs.map(sub =>
+    webpush.sendNotification(sub, body, { TTL: 3600 }).catch(err => {
+      // 410 Gone or 404 → subscription is permanently dead.
+      if (err && (err.statusCode === 410 || err.statusCode === 404)) {
+        dead.add(sub.endpoint);
+      } else {
+        log.warn('push: send failed', { endpoint: sub.endpoint.slice(0, 60), status: err && err.statusCode, err: err && err.message });
+      }
+    })
+  )).then(() => pruneSubscriptions(dead));
+}
+
+// Build a human-friendly notification payload for a match event. The two
+// player names come from the canonical key "P1|P2".
+function matchPushPayload(eventType, key, extra) {
+  const [p1, p2] = key.split('|');
+  let title, body;
+  if (eventType === 'match.start') {
+    title = '🎾 Започна мач';
+    body = `${p1} срещу ${p2}`;
+  } else if (eventType === 'set.complete') {
+    const setNum = extra && extra.setNumber;
+    const score = extra && extra.setScore;
+    title = `✓ Сет ${setNum}: ${score ? score[0] + '-' + score[1] : ''}`;
+    body = `${p1} срещу ${p2}`;
+  } else if (eventType === 'match.finish') {
+    const r = extra && extra.result;
+    title = '🏆 Краен резултат';
+    body = `${p1} ${r ? r[0] : '?'}-${r ? r[1] : '?'} ${p2}`;
+  } else {
+    title = 'Tennis';
+    body = `${p1} vs ${p2}`;
+  }
+  return { type: eventType, key, title, body, ts: new Date().toISOString() };
 }
 
 // Tournament timezone — non-admin "is this match scheduled for TODAY?" checks
@@ -687,7 +784,8 @@ const server = http.createServer(async (req, res) => {
         schedule: incoming.schedule,
         live: sanitizedLive,
         resultsRecordedAt: recordedIn,
-        players: existing.players
+        players: existing.players,
+        pushSubscriptions: existing.pushSubscriptions
       });
       audit(req, 'data.put', {
         resultsCount: Object.keys(incoming.results).length,
@@ -826,6 +924,10 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Snapshot previous live state for event detection (push notifications).
+      const prevLive = data.live[key] || null;
+      const prevSetsCount = prevLive ? prevLive.sets.length : 0;
+
       // Auto-finalize if either player has won 2 sets
       let setsA = 0, setsB = 0;
       for (const [a, b] of v.sets) {
@@ -859,6 +961,27 @@ const server = http.createServer(async (req, res) => {
         audit(req, 'live.cleared-empty', { key, isAdmin });
       } else {
         audit(req, 'live.update', { key, sets: v.sets.length, isAdmin });
+      }
+
+      // ---- push notifications (fire-and-forget, after the response is sent) ----
+      // Match start: no previous live state and the new state has any non-zero
+      // score (a point was scored). Treat undo-back-to-zero as not-a-start.
+      const hasAnyScore = v.sets.length > 0 || v.cur[0] > 0 || v.cur[1] > 0 || !!v.tb;
+      if (!finalized && !cleared && !prevLive && hasAnyScore) {
+        sendPushToAll(matchPushPayload('match.start', key));
+      }
+      // Set complete: sets array length grew (excluding the auto-finalize case
+      // which we report as match.finish below to avoid double-notifying).
+      if (!finalized && v.sets.length > prevSetsCount) {
+        const lastSet = v.sets[v.sets.length - 1];
+        sendPushToAll(matchPushPayload('set.complete', key, {
+          setNumber: v.sets.length,
+          setScore: lastSet
+        }));
+      }
+      // Match finish via auto-finalize.
+      if (finalized) {
+        sendPushToAll(matchPushPayload('match.finish', key, { result: data.results[key] }));
       }
       return json(res, 200, {
         ok: true,
@@ -904,7 +1027,64 @@ const server = http.createServer(async (req, res) => {
       if (data.live[key]) delete data.live[key];
       writeData(data);
       audit(req, 'match.finalize', { key, score: [s1, s2], via: 'result', isAdmin });
+      sendPushToAll(matchPushPayload('match.finish', key, { result: [s1, s2] }));
       return json(res, 200, { ok: true, result: [s1, s2] });
+    }
+
+    // ===== PUSH NOTIFICATIONS =====
+    // GET /api/push/vapid-public-key  → returns the public key (or 404 if push disabled)
+    // POST /api/push/subscribe        → body: PushSubscription JSON; idempotent by endpoint
+    // POST /api/push/unsubscribe      → body: { endpoint: "..." }; idempotent
+    if (url === '/api/push/vapid-public-key' && req.method === 'GET') {
+      if (!pushEnabled) return json(res, 404, { error: 'push disabled' });
+      return json(res, 200, { publicKey: process.env.VAPID_PUBLIC_KEY });
+    }
+    if (url === '/api/push/subscribe' && req.method === 'POST') {
+      if (!pushEnabled) return json(res, 503, { error: 'push disabled' });
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch (e) { return json(res, 400, { error: 'invalid json' }); }
+      if (!parsed || typeof parsed.endpoint !== 'string' || !parsed.endpoint
+          || !parsed.keys || typeof parsed.keys.p256dh !== 'string' || typeof parsed.keys.auth !== 'string') {
+        return json(res, 400, { error: 'invalid subscription' });
+      }
+      // Reject endpoints longer than 1KB (sanity).
+      if (parsed.endpoint.length > 1024) return json(res, 400, { error: 'endpoint too long' });
+      // ---- atomic critical section ----
+      const data = readData();
+      const exists = data.pushSubscriptions.find(s => s.endpoint === parsed.endpoint);
+      if (!exists) {
+        data.pushSubscriptions = [...data.pushSubscriptions, {
+          endpoint: parsed.endpoint,
+          keys: { p256dh: parsed.keys.p256dh, auth: parsed.keys.auth },
+          subscribedAt: new Date().toISOString()
+        }];
+        // Cap at 500 subscribers (way more than this league will ever see).
+        if (data.pushSubscriptions.length > 500) {
+          data.pushSubscriptions = data.pushSubscriptions.slice(-500);
+        }
+        writeData(data);
+        log.info('push: new subscription', { endpoint: parsed.endpoint.slice(0, 60), total: data.pushSubscriptions.length });
+      }
+      return json(res, 200, { ok: true });
+    }
+    if (url === '/api/push/unsubscribe' && req.method === 'POST') {
+      if (!pushEnabled) return json(res, 200, { ok: true });
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch (e) { return json(res, 400, { error: 'invalid json' }); }
+      const endpoint = parsed && typeof parsed.endpoint === 'string' ? parsed.endpoint : '';
+      if (!endpoint) return json(res, 400, { error: 'endpoint required' });
+      const data = readData();
+      const before = data.pushSubscriptions.length;
+      data.pushSubscriptions = data.pushSubscriptions.filter(s => s.endpoint !== endpoint);
+      if (data.pushSubscriptions.length !== before) {
+        writeData(data);
+        log.info('push: unsubscribed', { endpoint: endpoint.slice(0, 60), total: data.pushSubscriptions.length });
+      }
+      return json(res, 200, { ok: true });
     }
 
     if (url === '/api/auth' && req.method === 'POST') {

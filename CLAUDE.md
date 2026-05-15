@@ -48,6 +48,11 @@ All match-key-bearing endpoints **must** validate against `buildValidKeys(data.p
 - `PUT /api/data` (validates all keys in `results`/`schedule`/`live`/`resultsRecordedAt`)
 - `POST /api/players` (admin-only, name validation: non-empty, ≤40 chars, no `|`, unique)
 
+Push-notification endpoints (no key validation needed — they store browser subscriptions, not match data):
+- `GET /api/push/vapid-public-key` (public; 404 if push disabled)
+- `POST /api/push/subscribe` (public; idempotent by endpoint)
+- `POST /api/push/unsubscribe` (public; idempotent)
+
 **Admin authentication**: use `checkAdmin(req)` which prefers session token (`X-Admin-Token` header) over plaintext password (`X-Admin-Password` — kept for transitional backward-compat only). Tokens are issued by `POST /api/auth` and revoked by `DELETE /api/auth`. Don't write new endpoints that accept the password header directly.
 
 **Audit log**: every successful admin mutation **must** call `audit(req, '<action>', { ... })`. Lines go to `<DATA_DIR>/audit.jsonl` and are the forensic record. Action names follow `<noun>.<verb>` (e.g. `player.delete`, `match.finalize`).
@@ -91,7 +96,7 @@ When tempted to add infra "for scale" — reread the numbers above. If the chang
 Don't "fix" these without explicit user request — each was a deliberate scale-vs-complexity tradeoff:
 
 - **No build step.** Files served as authored. No bundler, no TS, no minification beyond what's shipped.
-- **No npm dependencies.** Server uses only Node built-ins. Adding `express` etc. is a no.
+- **One npm dependency: `web-push`.** Required for VAPID-encrypted Web Push (RFC 8291) — hand-rolling that crypto correctly is a multi-hundred-LOC project, so the single battle-tested dep is the pragmatic call. Don't add others (no `express` etc.). Push fires from `/api/match/<key>/live` (start, set-complete, auto-finalize) and `/api/match/<key>/result` (manual finalize) via `sendPushToAll()`. Subscriptions live in `data.pushSubscriptions[]`. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` env vars (see `.env.example`); without them push silently disables and the bell UI hides.
 - **No SQL/Postgres.** Single JSON file is correct at this scale (≤150 KB). Don't suggest "scaling" the storage.
 - **Plain-text admin password in env var** (paired with timing-safe compare server-side and short-lived session token client-side — never the password itself in storage). Standard 12-factor.
 - **No multi-user / RBAC.** One shared admin role is the right size for a hobby league.
@@ -105,6 +110,7 @@ Don't "fix" these without explicit user request — each was a deliberate scale-
 $env:ADMIN_PASSWORD = "test123"
 $env:DATA_DIR = "./data"   # avoid trying to create /data on Windows
 node server.js
+# (or just create .env from .env.example — server auto-loads it at boot)
 ```
 
 ## Tests

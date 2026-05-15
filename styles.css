@@ -1188,6 +1188,54 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   }
 }
 
+/* Push-notifications bell — single floating toggle, top-right corner.
+   Subscribed state inverts colors so it's clear at a glance. */
+.push-bell {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 220;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  transition: transform 0.15s, background 0.2s, border-color 0.2s;
+  padding: 0;
+  line-height: 1;
+}
+.push-bell:hover { transform: scale(1.05); }
+.push-bell:active { transform: scale(0.95); }
+.push-bell.subscribed {
+  background: linear-gradient(180deg, #1a4a2e, #143820);
+  border-color: var(--accent);
+}
+.push-bell.denied {
+  opacity: 0.5;
+  cursor: help;
+}
+.push-bell.pending {
+  opacity: 0.6;
+  cursor: progress;
+}
+.push-bell:disabled { pointer-events: none; }
+@media (max-width: 640px) {
+  .push-bell {
+    top: 10px;
+    right: 10px;
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+}
+
 .btn-icon {
   width: 38px; height: 38px;
   border-radius: 10px;

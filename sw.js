@@ -80,3 +80,46 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// ===== Web Push =====
+//
+// Server sends JSON payload via web-push. We render it as an OS notification.
+// `tag` per match key collapses repeated notifications for the same match,
+// so the user sees the latest state instead of a stack of stale ones.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; }
+  catch (e) { data = { title: 'Тенис Лига', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'Тенис Лига Велинград';
+  const options = {
+    body: data.body || '',
+    icon: '/apple-touch-icon.png',
+    badge: '/favicon.svg',
+    tag: data.key ? 'match:' + data.key : 'tennis',
+    renotify: true,
+    data: { url: '/', key: data.key || null, type: data.type || null }
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Click → focus an existing tab if open, else open a new one. Cheap UX win:
+// users with the site already open don't get a duplicate tab.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of all) {
+      if ('focus' in client) {
+        try {
+          await client.focus();
+          if ('navigate' in client && new URL(client.url).pathname !== targetUrl) {
+            await client.navigate(targetUrl);
+          }
+          return;
+        } catch (e) { /* try next */ }
+      }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(targetUrl);
+  })());
+});

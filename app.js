@@ -79,7 +79,7 @@ document.addEventListener('alpine:init', () => {
     timePresets: [
       '09:00','09:30','10:00','10:30','11:00','11:30','12:00','12:30',
       '13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30',
-      '17:00','17:30','18:00','18:30','19:00','19:30'
+      '17:00','17:30','18:00','18:30','19:00','19:30','20:00'
     ],
 
     playerPicker: {
@@ -122,12 +122,25 @@ document.addEventListener('alpine:init', () => {
     scheduledMatches: [],
     standings: [],
 
+    // Web Push state. supported=false hides the UI button entirely (e.g. on
+    // iOS Safari without PWA install). permission tracks the browser-level
+    // grant; subscribed tracks whether we have an active server subscription.
+    push: {
+      supported: false,
+      permission: 'default',
+      subscribed: false,
+      pending: false,
+      endpoint: null,
+      vapidKey: null
+    },
+
     // ======= INIT =======
     async init() {
       await this.detectBackend();
       await this.load();
       this.recomputeDerived();
       this.loadAppVersion();
+      this.initPush();
 
       // Auto-restore admin auth from localStorage. We prefer a session token
       // (rotated, server-revocable, no plaintext password on the wire). If
@@ -2409,6 +2422,129 @@ document.addEventListener('alpine:init', () => {
       };
       reader.readAsText(file);
       event.target.value = '';
+    },
+
+    // ======= WEB PUSH =======
+    //
+    // Browser-side glue for OS-level push notifications. Detects support, asks
+    // the server for the VAPID public key, and reflects current subscription
+    // state in the `push` reactive object so the UI can render a single
+    // bell-toggle button. Hidden entirely on unsupported browsers (e.g. iOS
+    // Safari without "Add to Home Screen").
+    async initPush() {
+      // Feature detect: needs SW + PushManager + Notification API. Push only
+      // makes sense in api mode (server is the sender).
+      const supported =
+        typeof window !== 'undefined' &&
+        'serviceWorker' in navigator &&
+        'PushManager' in window &&
+        'Notification' in window &&
+        this.backendMode === 'api';
+      this.push.supported = supported;
+      if (!supported) return;
+      this.push.permission = Notification.permission;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+          this.push.subscribed = true;
+          this.push.endpoint = existing.endpoint;
+        }
+        // Fetch VAPID key lazily (only needed when subscribing).
+        const r = await fetch('/api/push/vapid-public-key');
+        if (r.ok) {
+          const j = await r.json();
+          this.push.vapidKey = j.publicKey;
+        } else {
+          // Server has push disabled (no VAPID env vars). Keep UI hidden.
+          this.push.supported = false;
+        }
+      } catch (e) {
+        console.warn('[push] init failed', e);
+      }
+    },
+
+    async togglePush() {
+      if (!this.push.supported || this.push.pending) return;
+      this.push.pending = true;
+      try {
+        if (this.push.subscribed) {
+          await this._unsubscribePush();
+          this.toast = 'Спряхте известията';
+          setTimeout(() => { this.toast = ''; }, 2000);
+        } else {
+          await this._subscribePush();
+          this.toast = '🔔 Абонирани сте за известия';
+          setTimeout(() => { this.toast = ''; }, 2500);
+        }
+      } catch (e) {
+        const msg = (e && e.message) || 'Грешка при абониране';
+        this.toast = msg;
+        setTimeout(() => { this.toast = ''; }, 3000);
+      } finally {
+        this.push.pending = false;
+      }
+    },
+
+    async _subscribePush() {
+      // Ask permission. requestPermission resolves with current state if it
+      // was already decided, so it's safe to call unconditionally.
+      const perm = await Notification.requestPermission();
+      this.push.permission = perm;
+      if (perm !== 'granted') {
+        throw new Error(perm === 'denied'
+          ? 'Известията са блокирани от браузъра. Разрешете ги от настройките.'
+          : 'Не разрешихте известия.');
+      }
+      if (!this.push.vapidKey) throw new Error('Сървърът не е готов за push.');
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: this._urlBase64ToUint8Array(this.push.vapidKey)
+      });
+      const subJson = sub.toJSON();
+      const r = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(subJson)
+      });
+      if (!r.ok) {
+        // Roll back the local subscription so the user can retry cleanly.
+        try { await sub.unsubscribe(); } catch (e) {}
+        throw new Error('Сървърът отказа абонамента (HTTP ' + r.status + ').');
+      }
+      this.push.subscribed = true;
+      this.push.endpoint = sub.endpoint;
+    },
+
+    async _unsubscribePush() {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      const endpoint = sub ? sub.endpoint : this.push.endpoint;
+      if (sub) { try { await sub.unsubscribe(); } catch (e) {} }
+      if (endpoint) {
+        // Best-effort: server prunes 410s on next send anyway, but explicit
+        // is cleaner.
+        try {
+          await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint })
+          });
+        } catch (e) {}
+      }
+      this.push.subscribed = false;
+      this.push.endpoint = null;
+    },
+
+    // VAPID public key arrives as URL-safe base64; PushManager wants Uint8Array.
+    _urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const raw = atob(base64);
+      const out = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+      return out;
     }
   }));
 });
