@@ -1194,53 +1194,107 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   }
 }
 
-/* Push-notifications bell — single floating toggle, top-right corner.
-   Subscribed state inverts colors so it's clear at a glance.
+/* Push-notifications toggle — pill button with explicit text label so
+   users immediately understand state without reading icons. Three states:
+     - Off (default):       🔔 "Включи известия"     — accent border, pulsing
+     - On  (subscribed):    ✓  "Известията са ВКЛ"   — green-tinted bg
+     - Denied:              🚫 "Блокирани"           — dim, cursor:help
    safe-area-inset-top keeps it below the iOS Dynamic Island in PWA mode. */
 .push-bell {
   position: fixed;
   top: calc(14px + var(--safe-top));
   right: calc(14px + env(safe-area-inset-right, 0px));
   z-index: 220;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  height: 36px;
+  border-radius: 999px;
   background: var(--bg-1);
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--accent-2);
   color: var(--text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-  transition: transform 0.15s, background 0.2s, border-color 0.2s;
-  padding: 0;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+  transition: transform 0.15s, background 0.2s, border-color 0.2s, box-shadow 0.2s;
+  padding: 0 14px;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  /* Subtle attention-grabber for off state — finite pulses so it doesn't
+     annoy after first visit. */
+  animation: push-bell-pulse 2.4s ease-out 1s 3;
+}
+.push-bell-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   line-height: 1;
 }
-.push-bell:hover { transform: scale(1.05); }
-.push-bell:active { transform: scale(0.95); }
-.push-bell.subscribed {
-  background: linear-gradient(180deg, #1a4a2e, #143820);
-  border-color: var(--accent);
+.push-bell-icon {
+  font-size: 15px;
+  line-height: 1;
 }
+.push-bell-label {
+  line-height: 1;
+}
+@media (hover: hover) {
+  .push-bell:hover {
+    transform: scale(1.04);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 14px var(--accent-glow);
+  }
+}
+.push-bell:active { transform: scale(0.96); }
+
+/* Subscribed: green confirmation, no more pulsing. */
+.push-bell.subscribed {
+  background: linear-gradient(180deg, #1e5a36, #173f25);
+  border-color: var(--win, #7ed386);
+  color: #d8f5dd;
+  animation: none;
+}
+.push-bell.subscribed .push-bell-icon {
+  color: #b6f0bc;
+  font-weight: 900;
+  font-size: 14px;
+}
+
 .push-bell.denied {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: help;
+  border-color: var(--line);
+  animation: none;
 }
 .push-bell.pending {
-  opacity: 0.6;
+  opacity: 0.7;
   cursor: progress;
+  animation: none;
 }
 .push-bell:disabled { pointer-events: none; }
+
+@keyframes push-bell-pulse {
+  0%   { box-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 0 0 0 var(--accent-glow); }
+  40%  { box-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 0 0 12px rgba(212,175,55,0); }
+  100% { box-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 0 0 0 rgba(212,175,55,0); }
+}
+
 @media (max-width: 640px) {
   .push-bell {
     top: calc(10px + var(--safe-top));
     right: calc(10px + env(safe-area-inset-right, 0px));
-    width: 40px;
-    height: 40px;
-    font-size: 18px;
+    height: 32px;
+    font-size: 12px;
+    padding: 0 12px;
   }
+  .push-bell-icon { font-size: 13px; }
+}
+/* Very small screens (iPhone SE etc.) — keep icon visible but hide the long
+   "Известията са ВКЛ" label so the pill doesn't collide with the hero title.
+   The icon alone (✓ / 🔔) plus the green color still tells the story. */
+@media (max-width: 380px) {
+  .push-bell.subscribed .push-bell-label { display: none; }
+  .push-bell.subscribed { padding: 0 10px; }
 }
 
 .btn-icon {

@@ -94,21 +94,42 @@
     ✨ Налична е нова версия — кликни за обнова
   </div>
 
-  <!-- Push-notifications toggle (bell). Hidden if browser doesn't support
-       Web Push or the server has push disabled. Single button — tap to
-       subscribe, tap again to unsubscribe. Permission-denied state shows a
-       struck-through bell to signal the user must unblock in browser settings. -->
+  <!-- Push-notifications toggle. Hidden if browser doesn't support Web Push
+       (e.g. iOS Safari outside of PWA mode). Single pill button with explicit
+       text labels — "🔔 Включи известия" → "✓ Включени". The off state pulses
+       gently for ~3s on first visit so users notice it exists. -->
   <button class="push-bell"
           x-show="push.supported"
           :class="{ subscribed: push.subscribed, denied: push.permission === 'denied', pending: push.pending }"
           :disabled="push.pending"
           @click="togglePush()"
-          :title="push.permission === 'denied' ? 'Известията са блокирани в браузъра' : (push.subscribed ? 'Спри известията' : 'Получавай известия за мачове на живо')"
+          :title="push.permission === 'denied' ? 'Известията са блокирани в браузъра. Отблокирай от настройките на сайта.' : (push.subscribed ? 'Получаваш известия за мачовете. Кликни за спиране.' : 'Кликни за да получаваш известия за мачове на живо')"
           :aria-label="push.subscribed ? 'Спри известията' : 'Включи известията'"
           x-cloak>
-    <span x-show="!push.subscribed && push.permission !== 'denied'">🔔</span>
-    <span x-show="push.subscribed">🔕</span>
-    <span x-show="push.permission === 'denied'">🚫</span>
+    <template x-if="push.pending">
+      <span class="push-bell-content">
+        <span class="push-bell-icon">⏳</span>
+        <span class="push-bell-label">Момент…</span>
+      </span>
+    </template>
+    <template x-if="!push.pending && !push.subscribed && push.permission !== 'denied'">
+      <span class="push-bell-content">
+        <span class="push-bell-icon">🔔</span>
+        <span class="push-bell-label">Включи известия</span>
+      </span>
+    </template>
+    <template x-if="!push.pending && push.subscribed">
+      <span class="push-bell-content">
+        <span class="push-bell-icon">✓</span>
+        <span class="push-bell-label">Известията са ВКЛ</span>
+      </span>
+    </template>
+    <template x-if="!push.pending && push.permission === 'denied'">
+      <span class="push-bell-content">
+        <span class="push-bell-icon">🚫</span>
+        <span class="push-bell-label">Блокирани</span>
+      </span>
+    </template>
   </button>
 
   <!-- HERO (compact, only on standings) -->
