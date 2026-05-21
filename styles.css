@@ -3735,12 +3735,17 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 }
 
 /* --- Compact head --- */
+/* 3-column grid so the ⋯ menu trigger sits dead-center of the row and the
+   right slot stays empty — that's where the fixed .push-bell floats, so the
+   two no longer overlap. Status pill stays left. */
 .admin-head-v2 {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
+.admin-head-v2 .admin-status-mini { justify-self: start; }
+.admin-head-v2 .admin-menu-trigger { justify-self: center; }
 .admin-status-mini {
   display: inline-flex;
   align-items: center;

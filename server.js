@@ -259,6 +259,7 @@ function readData() {
   if (!d.resultsRecordedAt) d.resultsRecordedAt = {};
   if (!Array.isArray(d.players) || d.players.length === 0) d.players = PLAYERS.slice();
   if (!Array.isArray(d.pushSubscriptions)) d.pushSubscriptions = [];
+  if (!d.reminderSent || typeof d.reminderSent !== 'object') d.reminderSent = {};
   return d;
 }
 
@@ -338,6 +339,11 @@ function matchPushPayload(eventType, key, extra) {
     const r = extra && extra.result;
     title = '🏆 Краен резултат';
     body = `${p1} ${r ? r[0] : '?'}-${r ? r[1] : '?'} ${p2}`;
+  } else if (eventType === 'match.reminder') {
+    const mins = extra && extra.mins;
+    const unit = mins === 1 ? 'минута' : 'минути';
+    title = mins ? `⏰ След ${mins} ${unit} започва мач` : '⏰ Мач започва скоро';
+    body = `${p1} срещу ${p2}`;
   } else {
     title = 'Tennis';
     body = `${p1} vs ${p2}`;
@@ -356,6 +362,93 @@ const _todayFmt = new Intl.DateTimeFormat('en-CA', {
 function todayLocalISO() {
   // en-CA happens to format as YYYY-MM-DD natively.
   return _todayFmt.format(new Date());
+}
+
+// ===== Scheduled match reminders =====
+//
+// Fire a one-time push REMINDER_LEAD_MS before a scheduled match starts.
+// schedule[key] is a Sofia wall-clock string "YYYY-MM-DDThh:mm" (no zone), so
+// we resolve it against Europe/Sofia regardless of the host process's TZ —
+// same reasoning as todayLocalISO. A per-match flag in data.reminderSent[key]
+// (= the scheduledAt value) prevents duplicate sends and re-arms automatically
+// if the admin reschedules to a new time.
+const REMINDER_LEAD_MS = 10 * 60 * 1000; // 10 minutes before start
+const REMINDER_TICK_MS = 60 * 1000;      // re-check once a minute
+
+// Offset (ms) of `tz` from UTC at the given instant. Positive = ahead of UTC.
+function tzOffsetMs(tz, date) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  const p = {};
+  for (const part of dtf.formatToParts(date)) p[part.type] = part.value;
+  let hour = +p.hour;
+  if (hour === 24) hour = 0; // some engines emit "24" for midnight
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, hour, +p.minute, +p.second);
+  return asUTC - date.getTime();
+}
+
+// Convert a Sofia wall-clock "YYYY-MM-DDThh:mm" to a UTC epoch (ms). Returns
+// null if the string isn't a valid datetime. DST-correct via a two-step offset
+// resolution: the offset at the naive instant may differ from the offset at
+// the corrected instant around a DST boundary.
+function scheduleStartMs(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s || '');
+  if (!m) return null;
+  const [, Y, Mo, D, H, Mi] = m.map(Number);
+  const naive = Date.UTC(Y, Mo - 1, D, H, Mi);
+  let epoch = naive - tzOffsetMs(TOURNAMENT_TZ, new Date(naive));
+  epoch = naive - tzOffsetMs(TOURNAMENT_TZ, new Date(epoch));
+  return epoch;
+}
+
+// Pure: which scheduled matches are inside [start - leadMs, start) right now
+// and haven't already been reminded for their current scheduledAt value. Skips
+// matches already live or already finished. Returns an array of keys.
+function dueReminders(data, nowMs, leadMs) {
+  const out = [];
+  const schedule = data.schedule || {};
+  const reminderSent = data.reminderSent || {};
+  const live = data.live || {};
+  const results = data.results || {};
+  for (const key in schedule) {
+    const sched = schedule[key];
+    if (live[key] || results[key]) continue;   // already started / finished
+    if (reminderSent[key] === sched) continue;  // already reminded for this time
+    const start = scheduleStartMs(sched);
+    if (start === null) continue;
+    if (nowMs >= start - leadMs && nowMs < start) out.push(key);
+  }
+  return out;
+}
+
+// One pass of the reminder scheduler. Marks matches as reminded (and persists)
+// BEFORE sending, so an overlapping tick or a crash can never double-send.
+// Also prunes stale flags for matches that are no longer scheduled.
+function reminderTick() {
+  if (!pushEnabled) return;
+  const data = readData();
+  if (data.pushSubscriptions.length === 0) return; // nobody to notify yet
+
+  let changed = false;
+  for (const k in data.reminderSent) {
+    if (!data.schedule[k]) { delete data.reminderSent[k]; changed = true; }
+  }
+  const due = dueReminders(data, Date.now(), REMINDER_LEAD_MS);
+  for (const key of due) {
+    data.reminderSent[key] = data.schedule[key];
+    changed = true;
+  }
+  if (changed) writeData(data);
+
+  for (const key of due) {
+    const start = scheduleStartMs(data.schedule[key]);
+    const mins = Math.max(1, Math.round((start - Date.now()) / 60000));
+    sendPushToAll(matchPushPayload('match.reminder', key, { mins }));
+    log.info('push: sent match reminder', { key, mins });
+  }
 }
 
 function clampInt(n, min, max) {
@@ -1159,6 +1252,16 @@ if (require.main === module) {
     log.info('server ready', { port: PORT, dataFile: DATA_FILE, cacheVersion: CACHE_VERSION });
   });
 
+  // Scheduled match reminders: a minute-resolution tick that fires a push
+  // ~10 min before each scheduled match. Wrapped so a bad tick can never crash
+  // the process. Run once right away so a deploy inside the window isn't missed.
+  let reminderTimer = null;
+  if (pushEnabled) {
+    const safeTick = () => { try { reminderTick(); } catch (e) { log.error('reminderTick failed', { err: e.message }); } };
+    safeTick();
+    reminderTimer = setInterval(safeTick, REMINDER_TICK_MS);
+  }
+
   // Graceful shutdown: on SIGTERM (Coolify rolling deploy) or SIGINT (Ctrl+C),
   // stop accepting new connections, let in-flight requests finish, then exit.
   // Without this, an in-flight `await readBody` during deploy is dropped and
@@ -1169,6 +1272,7 @@ if (require.main === module) {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info('shutdown: signal received', { signal });
+    if (reminderTimer) clearInterval(reminderTimer);
     // Force-exit after 10 s so a stuck connection can't block deploy forever.
     const killTimer = setTimeout(() => {
       log.warn('shutdown: drain timeout — exiting forcefully');
@@ -1197,6 +1301,9 @@ module.exports = {
   migratePlayerDelete,
   safeStringEqual,
   todayLocalISO,
+  tzOffsetMs,
+  scheduleStartMs,
+  dueReminders,
   authRateCheck,
   authRateRecord,
   createSession,

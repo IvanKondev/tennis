@@ -26,6 +26,8 @@ const {
   migratePlayerDelete,
   safeStringEqual,
   todayLocalISO,
+  scheduleStartMs,
+  dueReminders,
   authRateCheck,
   authRateRecord,
   readData,
@@ -357,6 +359,76 @@ test('todayLocalISO: matches Sofia local date regardless of process TZ', () => {
     year: 'numeric', month: '2-digit', day: '2-digit'
   }).format(new Date());
   assert.equal(todayLocalISO(), expected);
+});
+
+// --------------------------------------------------------------------------
+// scheduleStartMs: Sofia wall-clock string -> UTC epoch (DST-aware)
+// --------------------------------------------------------------------------
+test('scheduleStartMs: returns null for malformed input', () => {
+  assert.equal(scheduleStartMs(''), null);
+  assert.equal(scheduleStartMs(null), null);
+  assert.equal(scheduleStartMs('2026-05-21'), null);     // no time component
+  assert.equal(scheduleStartMs('not-a-date'), null);
+});
+
+test('scheduleStartMs: summer time (EEST, UTC+3) — 18:00 Sofia = 15:00 UTC', () => {
+  // 2026-05-21 is during daylight saving in Sofia (UTC+3).
+  const ms = scheduleStartMs('2026-05-21T18:00');
+  assert.equal(new Date(ms).toISOString(), '2026-05-21T15:00:00.000Z');
+});
+
+test('scheduleStartMs: winter time (EET, UTC+2) — 18:00 Sofia = 16:00 UTC', () => {
+  // 2026-01-15 is standard time in Sofia (UTC+2).
+  const ms = scheduleStartMs('2026-01-15T18:00');
+  assert.equal(new Date(ms).toISOString(), '2026-01-15T16:00:00.000Z');
+});
+
+// --------------------------------------------------------------------------
+// dueReminders: which scheduled matches are inside the [start-lead, start) window
+// --------------------------------------------------------------------------
+const LEAD = 10 * 60 * 1000;
+
+test('dueReminders: fires exactly 10 min before start', () => {
+  const start = scheduleStartMs('2026-05-21T18:00');
+  const data = { schedule: { 'A|B': '2026-05-21T18:00' }, reminderSent: {}, live: {}, results: {} };
+  // 11 min before -> not yet
+  assert.deepEqual(dueReminders(data, start - 11 * 60 * 1000, LEAD), []);
+  // exactly 10 min before -> due
+  assert.deepEqual(dueReminders(data, start - LEAD, LEAD), ['A|B']);
+  // 1 min before -> still due
+  assert.deepEqual(dueReminders(data, start - 60 * 1000, LEAD), ['A|B']);
+  // at/after start -> no longer a pre-match reminder
+  assert.deepEqual(dueReminders(data, start, LEAD), []);
+  assert.deepEqual(dueReminders(data, start + 1, LEAD), []);
+});
+
+test('dueReminders: skips matches already reminded for the same scheduledAt', () => {
+  const start = scheduleStartMs('2026-05-21T18:00');
+  const data = {
+    schedule: { 'A|B': '2026-05-21T18:00' },
+    reminderSent: { 'A|B': '2026-05-21T18:00' },
+    live: {}, results: {}
+  };
+  assert.deepEqual(dueReminders(data, start - 5 * 60 * 1000, LEAD), []);
+});
+
+test('dueReminders: re-arms when the match is rescheduled to a new time', () => {
+  const start = scheduleStartMs('2026-05-21T20:00');
+  const data = {
+    schedule: { 'A|B': '2026-05-21T20:00' },        // new time
+    reminderSent: { 'A|B': '2026-05-21T18:00' },     // flag from old time
+    live: {}, results: {}
+  };
+  assert.deepEqual(dueReminders(data, start - 5 * 60 * 1000, LEAD), ['A|B']);
+});
+
+test('dueReminders: skips matches already live or finished', () => {
+  const start = scheduleStartMs('2026-05-21T18:00');
+  const now = start - 5 * 60 * 1000;
+  const liveData = { schedule: { 'A|B': '2026-05-21T18:00' }, reminderSent: {}, live: { 'A|B': {} }, results: {} };
+  const doneData = { schedule: { 'A|B': '2026-05-21T18:00' }, reminderSent: {}, live: {}, results: { 'A|B': [2, 0] } };
+  assert.deepEqual(dueReminders(liveData, now, LEAD), []);
+  assert.deepEqual(dueReminders(doneData, now, LEAD), []);
 });
 
 // --------------------------------------------------------------------------
