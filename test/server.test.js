@@ -384,42 +384,57 @@ test('scheduleStartMs: winter time (EET, UTC+2) — 18:00 Sofia = 16:00 UTC', ()
 });
 
 // --------------------------------------------------------------------------
-// dueReminders: which scheduled matches are inside the [start-lead, start) window
+// dueReminders: two one-shot stages per match — 'lead' (T-10min) and 'start' (T0)
 // --------------------------------------------------------------------------
 const LEAD = 10 * 60 * 1000;
 
-test('dueReminders: fires exactly 10 min before start', () => {
+test('dueReminders: lead stage fires in [start-10min, start)', () => {
   const start = scheduleStartMs('2026-05-21T18:00');
   const data = { schedule: { 'A|B': '2026-05-21T18:00' }, reminderSent: {}, live: {}, results: {} };
-  // 11 min before -> not yet
-  assert.deepEqual(dueReminders(data, start - 11 * 60 * 1000, LEAD), []);
-  // exactly 10 min before -> due
-  assert.deepEqual(dueReminders(data, start - LEAD, LEAD), ['A|B']);
-  // 1 min before -> still due
-  assert.deepEqual(dueReminders(data, start - 60 * 1000, LEAD), ['A|B']);
-  // at/after start -> no longer a pre-match reminder
-  assert.deepEqual(dueReminders(data, start, LEAD), []);
-  assert.deepEqual(dueReminders(data, start + 1, LEAD), []);
+  assert.deepEqual(dueReminders(data, start - 11 * 60 * 1000, LEAD), []);                    // 11 min before: nothing
+  assert.deepEqual(dueReminders(data, start - LEAD, LEAD), [{ key: 'A|B', stage: 'lead' }]); // exactly 10
+  assert.deepEqual(dueReminders(data, start - 60 * 1000, LEAD), [{ key: 'A|B', stage: 'lead' }]); // 1 min before
 });
 
-test('dueReminders: skips matches already reminded for the same scheduledAt', () => {
+test('dueReminders: start stage fires in [start, start+10min)', () => {
+  const start = scheduleStartMs('2026-05-21T18:00');
+  const data = { schedule: { 'A|B': '2026-05-21T18:00' }, reminderSent: {}, live: {}, results: {} };
+  assert.deepEqual(dueReminders(data, start, LEAD), [{ key: 'A|B', stage: 'start' }]);
+  assert.deepEqual(dueReminders(data, start + 60 * 1000, LEAD), [{ key: 'A|B', stage: 'start' }]);
+  assert.deepEqual(dueReminders(data, start + LEAD, LEAD), []); // too late -> stale, skipped
+});
+
+test('dueReminders: each stage fires only once', () => {
   const start = scheduleStartMs('2026-05-21T18:00');
   const data = {
     schedule: { 'A|B': '2026-05-21T18:00' },
-    reminderSent: { 'A|B': '2026-05-21T18:00' },
+    reminderSent: { 'A|B': { at: '2026-05-21T18:00', lead: true } },
     live: {}, results: {}
   };
+  // lead already sent -> nothing in the lead window
   assert.deepEqual(dueReminders(data, start - 5 * 60 * 1000, LEAD), []);
+  // start still pending -> fires at start time
+  assert.deepEqual(dueReminders(data, start + 60 * 1000, LEAD), [{ key: 'A|B', stage: 'start' }]);
+  // both sent -> nothing
+  data.reminderSent['A|B'].start = true;
+  assert.deepEqual(dueReminders(data, start + 60 * 1000, LEAD), []);
 });
 
-test('dueReminders: re-arms when the match is rescheduled to a new time', () => {
+test('dueReminders: missed lead window still fires start (no late lead spam)', () => {
+  const start = scheduleStartMs('2026-05-21T18:00');
+  // Server was down through the whole lead window; first tick is past start.
+  const data = { schedule: { 'A|B': '2026-05-21T18:00' }, reminderSent: {}, live: {}, results: {} };
+  assert.deepEqual(dueReminders(data, start + 60 * 1000, LEAD), [{ key: 'A|B', stage: 'start' }]);
+});
+
+test('dueReminders: re-arms both stages when rescheduled to a new time', () => {
   const start = scheduleStartMs('2026-05-21T20:00');
   const data = {
-    schedule: { 'A|B': '2026-05-21T20:00' },        // new time
-    reminderSent: { 'A|B': '2026-05-21T18:00' },     // flag from old time
+    schedule: { 'A|B': '2026-05-21T20:00' },                               // new time
+    reminderSent: { 'A|B': { at: '2026-05-21T18:00', lead: true, start: true } }, // flags from old time
     live: {}, results: {}
   };
-  assert.deepEqual(dueReminders(data, start - 5 * 60 * 1000, LEAD), ['A|B']);
+  assert.deepEqual(dueReminders(data, start - 5 * 60 * 1000, LEAD), [{ key: 'A|B', stage: 'lead' }]);
 });
 
 test('dueReminders: skips matches already live or finished', () => {

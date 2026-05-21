@@ -340,9 +340,10 @@ function matchPushPayload(eventType, key, extra) {
     title = '🏆 Краен резултат';
     body = `${p1} ${r ? r[0] : '?'}-${r ? r[1] : '?'} ${p2}`;
   } else if (eventType === 'match.reminder') {
-    const mins = extra && extra.mins;
-    const unit = mins === 1 ? 'минута' : 'минути';
-    title = mins ? `⏰ След ${mins} ${unit} започва мач` : '⏰ Мач започва скоро';
+    title = '⏰ След 10 минути започва мач';
+    body = `${p1} срещу ${p2}`;
+  } else if (eventType === 'match.starttime') {
+    title = '🎾 Мачът започва сега';
     body = `${p1} срещу ${p2}`;
   } else {
     title = 'Tennis';
@@ -404,9 +405,12 @@ function scheduleStartMs(s) {
   return epoch;
 }
 
-// Pure: which scheduled matches are inside [start - leadMs, start) right now
-// and haven't already been reminded for their current scheduledAt value. Skips
-// matches already live or already finished. Returns an array of keys.
+// Pure: exactly two notifications per scheduled match, each fired once —
+//   'lead'  in [start - leadMs, start)  → "След 10 минути започва мач"
+//   'start' in [start, start + leadMs)  → "Мачът започва сега"
+// reminderSent[key] = { at, lead, start } tracks which stages already fired and
+// re-arms automatically when `at` (the scheduledAt value) changes. Matches that
+// are already live or finished are skipped. Returns [{ key, stage }, ...].
 function dueReminders(data, nowMs, leadMs) {
   const out = [];
   const schedule = data.schedule || {};
@@ -416,15 +420,21 @@ function dueReminders(data, nowMs, leadMs) {
   for (const key in schedule) {
     const sched = schedule[key];
     if (live[key] || results[key]) continue;   // already started / finished
-    if (reminderSent[key] === sched) continue;  // already reminded for this time
     const start = scheduleStartMs(sched);
     if (start === null) continue;
-    if (nowMs >= start - leadMs && nowMs < start) out.push(key);
+    const rec = reminderSent[key];
+    const armed = rec && rec.at === sched ? rec : null; // null → re-armed
+    if (!(armed && armed.lead) && nowMs >= start - leadMs && nowMs < start) {
+      out.push({ key, stage: 'lead' });
+    }
+    if (!(armed && armed.start) && nowMs >= start && nowMs < start + leadMs) {
+      out.push({ key, stage: 'start' });
+    }
   }
   return out;
 }
 
-// One pass of the reminder scheduler. Marks matches as reminded (and persists)
+// One pass of the reminder scheduler. Marks each stage as fired (and persists)
 // BEFORE sending, so an overlapping tick or a crash can never double-send.
 // Also prunes stale flags for matches that are no longer scheduled.
 function reminderTick() {
@@ -437,17 +447,20 @@ function reminderTick() {
     if (!data.schedule[k]) { delete data.reminderSent[k]; changed = true; }
   }
   const due = dueReminders(data, Date.now(), REMINDER_LEAD_MS);
-  for (const key of due) {
-    data.reminderSent[key] = data.schedule[key];
+  for (const { key, stage } of due) {
+    const sched = data.schedule[key];
+    const rec = (data.reminderSent[key] && data.reminderSent[key].at === sched)
+      ? data.reminderSent[key] : { at: sched };
+    rec[stage] = true;
+    data.reminderSent[key] = rec;
     changed = true;
   }
   if (changed) writeData(data);
 
-  for (const key of due) {
-    const start = scheduleStartMs(data.schedule[key]);
-    const mins = Math.max(1, Math.round((start - Date.now()) / 60000));
-    sendPushToAll(matchPushPayload('match.reminder', key, { mins }));
-    log.info('push: sent match reminder', { key, mins });
+  for (const { key, stage } of due) {
+    const type = stage === 'lead' ? 'match.reminder' : 'match.starttime';
+    sendPushToAll(matchPushPayload(type, key));
+    log.info('push: sent match reminder', { key, stage });
   }
 }
 
