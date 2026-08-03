@@ -138,6 +138,11 @@
       <span class="line-1">Тенис Лига</span>
       <span class="line-2">Велинград</span>
     </h1>
+    <!-- Which tournament these standings belong to. Hidden when unnamed
+         (legacy flat format) so the hero stays as it was. -->
+    <template x-if="tournamentName">
+      <div class="hero-tournament" x-text="tournamentName"></div>
+    </template>
     <!-- Tournament-progress bar — replaces the previous 4-metric stats line.
          The dominant question on a hobby league's home page is "how far along
          are we?" — answer it visually + numerically in one strip. -->
@@ -243,8 +248,10 @@
       </template>
 
       <!-- Podium — only when there's at least one played match. Compact
-           variant with W-L record + match-completion progress alongside name. -->
-      <template x-if="standings[0] && standings[0].played > 0">
+           variant with W-L record + match-completion progress alongside name.
+           Hidden in group format: a single top-3 across separate group
+           round-robins would compare records that never met. -->
+      <template x-if="!hasGroups && standings[0] && standings[0].played > 0">
         <div class="podium">
           <template x-if="standings[1]">
             <div class="podium-spot p2" @click="jumpToPlayer(standings[1].name)">
@@ -324,59 +331,89 @@
         </div>
       </template>
 
-      <!-- Active players (have ≥1 played match). Top-3 get medal accents. -->
-      <div class="standings-list">
-        <template x-for="(s, i) in standingsActive" :key="s.name">
-          <div class="standings-row"
-               :class="{['podium-' + (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '')]: i < 3}"
-               @click="jumpToPlayer(s.name)">
-            <span class="sr-rank" x-text="s.rank"></span>
-            <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
-            <div class="sr-info">
-              <span class="sr-name" x-text="s.name"></span>
-              <span class="sr-meta">
-                <span class="wl-w" x-text="s.wins"></span>–<span class="wl-l" x-text="s.losses"></span>
-                <span class="sr-meta-sep">·</span>
-                <span class="sr-sets"><span x-text="s.setsWon"></span>:<span x-text="s.setsLost"></span></span>
-                <span class="sr-meta-sep">·</span>
-                <span class="sr-progress" x-text="duelProgressLabel(s)"></span>
+      <!-- One block per group. Without a group split this is a single unnamed
+           block, so the markup is the same in both tournament formats.
+           Ranks + medal accents are WITHIN the group. -->
+      <template x-for="g in standingsGroupsView" :key="g.name || '_all'">
+        <div class="standings-group">
+          <template x-if="g.name">
+            <div class="group-head">
+              <span class="group-head-name" x-text="g.name"></span>
+              <span class="group-head-count">
+                <span x-show="!g.started">още не е започнала · </span><span x-text="g.active.length + g.inactive.length"></span> играчи
               </span>
             </div>
-            <span class="sr-points">
-              <span class="sr-points-val" x-text="s.wins"></span>
-              <span class="sr-points-label">Поб.</span>
-            </span>
-            <span class="sr-chev">›</span>
-          </div>
-        </template>
-      </div>
+          </template>
 
-      <!-- Inactive players (0 played) — collapsed-style separator + dim rows. -->
-      <template x-if="standingsInactive.length > 0">
-        <div class="standings-inactive">
-          <div class="standings-sep">
-            <span class="ss-line"></span>
-            <span class="ss-label">Без мачове · <span x-text="standingsInactive.length"></span></span>
-            <span class="ss-line"></span>
-          </div>
-          <template x-for="s in standingsInactive" :key="s.name">
-            <div class="standings-row dim" @click="jumpToPlayer(s.name)">
-              <span class="sr-rank">—</span>
-              <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
-              <div class="sr-info">
-                <span class="sr-name" x-text="s.name"></span>
-                <span class="sr-meta">няма мачове</span>
+          <!-- Played players ranked, top-3 with medal accents. Before a group's
+               first match there's nothing to rank — the whole lineup renders
+               here, alphabetically, with a dash for the position. -->
+          <div class="standings-list">
+            <template x-for="(s, i) in g.active" :key="s.name">
+              <div class="standings-row"
+                   :class="{['podium-' + (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '')]: i < 3 && g.started}"
+                   @click="jumpToPlayer(s.name)">
+                <span class="sr-rank" x-text="g.started ? s.rank : '—'"></span>
+                <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                <div class="sr-info">
+                  <span class="sr-name" x-text="s.name"></span>
+                  <span class="sr-meta">
+                    <span class="wl-w" x-text="s.wins"></span>–<span class="wl-l" x-text="s.losses"></span>
+                    <span class="sr-meta-sep">·</span>
+                    <span class="sr-sets"><span x-text="s.setsWon"></span>:<span x-text="s.setsLost"></span></span>
+                    <span class="sr-meta-sep">·</span>
+                    <span class="sr-progress" x-text="duelProgressLabel(s)"></span>
+                  </span>
+                </div>
+                <span class="sr-points">
+                  <span class="sr-points-val" x-text="s.wins"></span>
+                  <span class="sr-points-label">Поб.</span>
+                </span>
+                <span class="sr-chev">›</span>
               </div>
-              <span class="sr-chev">›</span>
+            </template>
+          </div>
+
+          <!-- Inactive players (0 played) — separator + dim rows. -->
+          <template x-if="g.inactive.length > 0">
+            <div class="standings-inactive">
+              <div class="standings-sep">
+                <span class="ss-line"></span>
+                <span class="ss-label">Без мачове · <span x-text="g.inactive.length"></span></span>
+                <span class="ss-line"></span>
+              </div>
+              <template x-for="s in g.inactive" :key="s.name">
+                <div class="standings-row dim" @click="jumpToPlayer(s.name)">
+                  <span class="sr-rank">—</span>
+                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                  <div class="sr-info">
+                    <span class="sr-name" x-text="s.name"></span>
+                    <span class="sr-meta">няма мачове</span>
+                  </div>
+                  <span class="sr-chev">›</span>
+                </div>
+              </template>
             </div>
           </template>
         </div>
       </template>
 
       <!-- Empty search results -->
-      <div class="duels-empty" x-show="duelSearch && standingsActive.length === 0 && standingsInactive.length === 0">
+      <div class="duels-empty" x-show="duelSearch && standingsNoMatches">
         Няма играч с име "<span x-text="duelSearch"></span>"
       </div>
+
+      <!-- History teaser — the finished tournaments live one tap away. -->
+      <template x-if="archive.length > 0">
+        <button class="history-link" @click="openHistory(null)">
+          <span class="hl-icon">📜</span>
+          <span class="hl-text">
+            <span class="hl-title">Минали турнири</span>
+            <span class="hl-sub" x-text="historyList.map(t => t.name).join(' · ')"></span>
+          </span>
+          <span class="hl-chev">›</span>
+        </button>
+      </template>
     </section>
 
     <!-- ===== UPCOMING ===== -->
@@ -473,7 +510,10 @@
               <span class="duel-rank" :class="{invisible: !s.played}" x-text="s.played ? s.rank : ''"></span>
               <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
               <div class="duel-card-info-v2">
-                <span class="duel-card-name-v2" x-text="s.name"></span>
+                <span class="duel-card-name-v2">
+                  <span x-text="s.name"></span>
+                  <span class="group-badge" x-show="s.group" x-text="s.group"></span>
+                </span>
                 <span class="duel-card-meta">
                   <span class="wl-w" x-text="s.wins"></span><span class="wl-sep">–</span><span class="wl-l" x-text="s.losses"></span>
                   <span class="duel-meta-sep" x-show="s.played">·</span>
@@ -598,6 +638,101 @@
         </div>
       </div>
 
+    </section>
+    </template>
+
+    <!-- ===== HISTORY (archived tournaments) =====
+         Read-only. Each snapshot is rendered with its OWN roster, so old
+         canonical keys stay valid however the active roster changes. -->
+    <template x-if="view === 'history'">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>История</h2>
+        <p>Приключили турнири</p>
+      </div>
+
+      <!-- Tournament switcher — only when there's more than one to pick from. -->
+      <template x-if="historyList.length > 1">
+        <div class="history-tabs">
+          <template x-for="t in historyList" :key="t.id">
+            <button class="history-tab"
+                    :class="{active: historyCurrent && historyCurrent.id === t.id}"
+                    @click="historyId = t.id"
+                    x-text="t.name"></button>
+          </template>
+        </div>
+      </template>
+
+      <template x-if="historyCurrent">
+        <div>
+          <div class="history-head">
+            <div class="history-title" x-text="historyCurrent.name"></div>
+            <div class="history-meta">
+              <span x-show="historyCurrent.endedAt" x-text="'Приключил ' + formatDateShort(historyCurrent.endedAt)"></span>
+              <span class="sr-meta-sep" x-show="historyCurrent.endedAt">·</span>
+              <span x-text="historyStats.players + ' играчи'"></span>
+              <span class="sr-meta-sep">·</span>
+              <span x-text="historyStats.played + ' от ' + historyStats.total + ' мача'"></span>
+            </div>
+          </div>
+
+          <!-- Final standings, one block per group (single block if flat). -->
+          <template x-for="g in historyStandings" :key="g.name || '_all'">
+            <div class="standings-group">
+              <template x-if="g.name">
+                <div class="group-head">
+                  <span class="group-head-name" x-text="g.name"></span>
+                </div>
+              </template>
+              <div class="standings-list">
+                <template x-for="(s, i) in g.rows" :key="s.name">
+                  <div class="standings-row static"
+                       :class="{['podium-' + (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '')]: i < 3 && s.played > 0}">
+                    <span class="sr-rank" x-text="s.played ? s.rank : '—'"></span>
+                    <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
+                    <div class="sr-info">
+                      <span class="sr-name" x-text="s.name"></span>
+                      <span class="sr-meta">
+                        <span class="wl-w" x-text="s.wins"></span>–<span class="wl-l" x-text="s.losses"></span>
+                        <span class="sr-meta-sep">·</span>
+                        <span class="sr-sets"><span x-text="s.setsWon"></span>:<span x-text="s.setsLost"></span></span>
+                      </span>
+                    </div>
+                    <span class="sr-points">
+                      <span class="sr-points-val" x-text="s.wins"></span>
+                      <span class="sr-points-label">Поб.</span>
+                    </span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- Every result of the archived tournament, newest recorded first. -->
+          <details class="history-results">
+            <summary class="recent-section-head">
+              <span class="rs-icon">📋</span>
+              <span class="rs-title">Всички резултати</span>
+              <span class="rs-count" x-text="historyResults.length"></span>
+              <span class="rs-chevron">▾</span>
+            </summary>
+            <div class="history-results-body">
+              <template x-for="m in historyResults" :key="m.key">
+                <div class="history-result-row">
+                  <span class="hr-date" x-text="m.recordedAt ? formatDateShort(m.recordedAt) : '—'"></span>
+                  <span class="hr-winner" x-text="m.winner"></span>
+                  <span class="hr-score" x-text="(m.winner === m.p1 ? m.s1 : m.s2) + ':' + (m.winner === m.p1 ? m.s2 : m.s1)"></span>
+                  <span class="hr-loser" x-text="m.loser"></span>
+                </div>
+              </template>
+            </div>
+          </details>
+        </div>
+      </template>
+
+      <div class="duels-empty" x-show="!historyCurrent">
+        Още няма приключили турнири.
+      </div>
     </section>
     </template>
 
@@ -795,16 +930,27 @@
               <span class="mi-meta" x-text="players.length"></span>
             </button>
             <hr class="admin-menu-sep" />
-            <button class="admin-menu-item" @click="adminMenuOpen=false; exportData()">
+            <!-- Импортът НЯМА свой ред в менюто: презаписва ЦЯЛАТА база и един
+                 погрешен тап тук е необратим. Стига се само чрез задържане на
+                 „Експорт“ ~1.5 s (виж importHoldStart в app.js) — жестът е
+                 нарочно недокументиран в UI-а. -->
+            <button class="admin-menu-item" :class="{ holding: importHolding }"
+                    @click="exportTap()"
+                    @pointerdown="importHoldStart()"
+                    @pointerup="importHoldCancel()"
+                    @pointerleave="importHoldCancel()"
+                    @pointercancel="importHoldCancel()"
+                    @contextmenu.prevent>
               <span class="mi-icon">⬇</span><span class="mi-label">Експорт</span>
             </button>
-            <!-- Импорт е скрит временно — твърде лесно се натиска по грешка
-                 и презаписва цялата база. Да се върне с потвърждение. -->
             <button class="admin-menu-item" @click="adminMenuOpen=false; hardRefresh()">
               <span class="mi-icon">↻</span><span class="mi-label">Презареди</span>
             </button>
             <hr class="admin-menu-sep" />
-            <button class="admin-menu-item" @click="adminAboutOpen=true">
+            <!-- Must close the menu: both sheets are fixed at the same bottom
+                 position, so leaving this one open stacks them on top of each
+                 other and the result reads as a broken half-menu. -->
+            <button class="admin-menu-item" @click="adminMenuOpen=false; adminAboutOpen=true">
               <span class="mi-icon">ℹ</span><span class="mi-label">За приложението</span>
             </button>
             <button class="admin-menu-item danger" @click="adminMenuOpen=false; logout()">
@@ -832,6 +978,29 @@
             <button class="btn-ghost full" @click="adminAboutOpen=false">Затвори</button>
           </div>
 
+          <!-- ===== Import sheet =====
+               Deliberately a separate screen: this replaces every result,
+               the roster, the tournament format and the archive in one go.
+               The file picker only appears after the warning has been read. -->
+          <div class="admin-menu-backdrop" x-show="adminImportOpen" @click="adminImportOpen=false" x-transition.opacity style="display:none"></div>
+          <div class="admin-import-sheet" x-show="adminImportOpen" x-transition style="display:none">
+            <div class="admin-menu-handle"></div>
+            <h3>⬆ Импорт на данни</h3>
+            <div class="import-warning">
+              <p><strong>Това презаписва всичко:</strong> резултати, програма, състав, формат на турнира и историята.</p>
+              <p>Текущото състояние: <strong x-text="players.length"></strong> играчи ·
+                 <strong x-text="playedMatches.length"></strong> изиграни мача ·
+                 <strong x-text="archive.length"></strong> в историята.</p>
+              <p class="import-tip">Направи <strong>Експорт</strong> първо — това е единственият начин да се върнеш назад.</p>
+            </div>
+            <button class="btn-ghost full" @click="exportData()">⬇ Първо експортирай текущите</button>
+            <label class="btn-danger-solid import-pick">
+              Избери файл за импорт…
+              <input type="file" accept="application/json,.json" @change="adminImportOpen=false; importData($event)" hidden />
+            </label>
+            <button class="btn-ghost full" @click="adminImportOpen=false">Отказ</button>
+          </div>
+
           <!-- ===== Players drawer (full-width sheet) ===== -->
           <div class="admin-menu-backdrop" x-show="adminPlayersOpen" @click="adminPlayersOpen=false; cancelEditPlayer()" x-transition.opacity style="display:none"></div>
           <div class="admin-players-drawer" x-show="adminPlayersOpen" x-transition style="display:none">
@@ -842,12 +1011,23 @@
 
             <!-- Add player form: input dominates, button is icon-only (compact). -->
             <form class="add-player-form" @submit.prevent="
-              const res = await addPlayer(newPlayerName);
+              const res = await addPlayer(newPlayerName, newPlayerGroup);
               if (res.ok) { newPlayerName = ''; addPlayerError = ''; }
               else addPlayerError = res.error;
             ">
               <input type="text" x-model="newPlayerName" placeholder="Добави нов играч…" maxlength="40" required />
-              <button type="submit" class="add-player-submit" :disabled="!newPlayerName.trim()" aria-label="Добави">+</button>
+              <!-- With a group split a new player must join one, otherwise they
+                   land on the roster with no possible fixtures. -->
+              <template x-if="hasGroups">
+                <select x-model="newPlayerGroup" class="add-player-group" required>
+                  <option value="">Група…</option>
+                  <template x-for="g in groups" :key="g.name">
+                    <option :value="g.name" x-text="g.name"></option>
+                  </template>
+                </select>
+              </template>
+              <button type="submit" class="add-player-submit"
+                      :disabled="!newPlayerName.trim() || (hasGroups && !newPlayerGroup)" aria-label="Добави">+</button>
             </form>
             <p class="add-player-error" x-show="addPlayerError" x-text="addPlayerError"></p>
 
@@ -1011,6 +1191,10 @@
     <button :class="{active: view==='grid'}" @click="view='grid'">
       <span class="nav-icon">⚔️</span>
       <span class="nav-label">Двубои</span>
+    </button>
+    <button x-show="archive.length > 0" :class="{active: view==='history'}" @click="openHistory(historyId)">
+      <span class="nav-icon">📜</span>
+      <span class="nav-label">История</span>
     </button>
     <button :class="{active: view==='admin'}" @click="view='admin'">
       <span class="nav-icon" x-text="isAdmin ? '🔓' : '🔒'"></span>

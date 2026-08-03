@@ -20,6 +20,11 @@ process.env.ADMIN_PASSWORD = 'test-pass';
 
 const {
   buildValidKeys,
+  buildValidPairs,
+  canonicalPair,
+  validateTournament,
+  validateArchive,
+  validateRoster,
   clampInt,
   validateLiveBody,
   migratePlayerRename,
@@ -66,6 +71,155 @@ test('buildValidKeys: cyrillic names work', () => {
   assert.ok(set.has('Вики|Иво'));
   assert.ok(set.has('Вики|Жоро Б'));
   assert.ok(set.has('Иво|Жоро Б'));
+});
+
+// --------------------------------------------------------------------------
+// buildValidPairs: group-aware fixture set.
+// --------------------------------------------------------------------------
+const GROUPED = {
+  players: ['Сашо', 'Белев', 'Иво', 'Емо', 'Лебанов', 'Никата', 'Нако', 'Гого', 'Вики', 'Моцко'],
+  tournament: {
+    name: 'Турнир лято 2026',
+    groups: [
+      { name: 'Група 1', players: ['Сашо', 'Белев', 'Иво', 'Емо', 'Лебанов'] },
+      { name: 'Група 2', players: ['Никата', 'Нако', 'Гого', 'Вики', 'Моцко'] }
+    ],
+    extraPairs: []
+  }
+};
+
+test('buildValidPairs: 2 groups of 5 → 20 fixtures, not 45', () => {
+  const set = buildValidPairs(GROUPED);
+  assert.equal(set.size, 20);           // 2 × C(5,2), NOT C(10,2) = 45
+});
+
+test('buildValidPairs: within-group pairs are valid', () => {
+  const set = buildValidPairs(GROUPED);
+  assert.ok(set.has('Сашо|Белев'));
+  assert.ok(set.has('Иво|Лебанов'));
+  assert.ok(set.has('Никата|Моцко'));
+});
+
+test('buildValidPairs: cross-group pairs are NOT fixtures', () => {
+  const set = buildValidPairs(GROUPED);
+  assert.ok(!set.has('Сашо|Никата'));
+  assert.ok(!set.has('Емо|Гого'));
+});
+
+test('buildValidPairs: keys stay canonical (roster order), not group order', () => {
+  const set = buildValidPairs(GROUPED);
+  // Сашо is index 0, Иво index 2 → "Сашо|Иво". Reverse must be rejected.
+  assert.ok(set.has('Сашо|Иво'));
+  assert.ok(!set.has('Иво|Сашо'));
+});
+
+test('buildValidPairs: extraPairs add the knockout stage without code changes', () => {
+  const withFinal = {
+    ...GROUPED,
+    tournament: { ...GROUPED.tournament, extraPairs: ['Сашо|Никата'] }
+  };
+  const set = buildValidPairs(withFinal);
+  assert.equal(set.size, 21);
+  assert.ok(set.has('Сашо|Никата'));
+});
+
+test('buildValidPairs: extraPairs get canonicalized', () => {
+  const withFinal = {
+    ...GROUPED,
+    // Supplied in the wrong order — must be stored canonically.
+    tournament: { ...GROUPED.tournament, extraPairs: ['Никата|Сашо'] }
+  };
+  const set = buildValidPairs(withFinal);
+  assert.ok(set.has('Сашо|Никата'));
+  assert.ok(!set.has('Никата|Сашо'));
+});
+
+test('buildValidPairs: no tournament → falls back to full round-robin', () => {
+  const flat = { players: ['A', 'B', 'C'], tournament: null };
+  const set = buildValidPairs(flat);
+  assert.equal(set.size, 3);
+  assert.ok(set.has('A|B'));
+});
+
+test('buildValidPairs: tournament without groups → full round-robin', () => {
+  const flat = { players: ['A', 'B', 'C'], tournament: { name: 'X', groups: null, extraPairs: [] } };
+  assert.equal(buildValidPairs(flat).size, 3);
+});
+
+test('canonicalPair: orders by roster index, null for unknown names', () => {
+  const roster = ['A', 'B', 'C'];
+  assert.equal(canonicalPair(roster, 'C', 'A'), 'A|C');
+  assert.equal(canonicalPair(roster, 'A', 'C'), 'A|C');
+  assert.equal(canonicalPair(roster, 'A', 'Z'), null);
+  assert.equal(canonicalPair(roster, 'A', 'A'), null);
+});
+
+// --------------------------------------------------------------------------
+// validateTournament / validateArchive
+// --------------------------------------------------------------------------
+test('validateTournament: null is a valid (flat) tournament', () => {
+  const r = validateTournament(null, ['A', 'B']);
+  assert.equal(r.ok, true);
+  assert.equal(r.tournament, null);
+});
+
+test('validateTournament: rejects a group player who is not on the roster', () => {
+  const r = validateTournament(
+    { name: 'T', groups: [{ name: 'G1', players: ['A', 'Z'] }] },
+    ['A', 'B']
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not on roster/);
+});
+
+test('validateTournament: rejects a player listed in two groups', () => {
+  const r = validateTournament({
+    name: 'T',
+    groups: [
+      { name: 'G1', players: ['A', 'B'] },
+      { name: 'G2', players: ['B', 'C'] }
+    ]
+  }, ['A', 'B', 'C']);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /two groups/);
+});
+
+test('validateTournament: requires a name', () => {
+  assert.equal(validateTournament({ groups: [] }, ['A', 'B']).ok, false);
+});
+
+test('validateArchive: accepts a snapshot keyed by its OWN roster', () => {
+  // "Иво|Сашо" is canonical under the archived 21-player order even though the
+  // active roster would canonicalize it the other way. Must still validate.
+  const r = validateArchive([{
+    id: 'spring-2026',
+    name: 'Турнир пролет 2026',
+    players: ['Иво', 'Сашо'],
+    results: { 'Иво|Сашо': [0, 2] }
+  }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.archive[0].results['Иво|Сашо'][1], 2);
+});
+
+test('validateArchive: rejects a result key not derivable from its roster', () => {
+  const r = validateArchive([{
+    id: 'x', name: 'X', players: ['A', 'B'], results: { 'A|Z': [2, 0] }
+  }]);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /invalid result key/);
+});
+
+test('validateArchive: rejects duplicate ids', () => {
+  const entry = { id: 'x', name: 'X', players: ['A', 'B'], results: {} };
+  const r = validateArchive([entry, { ...entry }]);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /duplicate archive id/);
+});
+
+test('validateRoster: rejects "|" in a name and duplicates', () => {
+  assert.equal(validateRoster(['A|B', 'C']).ok, false);
+  assert.equal(validateRoster(['A', 'A']).ok, false);
+  assert.equal(validateRoster(['A', 'B']).ok, true);
 });
 
 // --------------------------------------------------------------------------
@@ -231,6 +385,63 @@ test('migratePlayerDelete: input is not mutated', () => {
   const snapshot = JSON.stringify(before);
   migratePlayerDelete(before, 'A');
   assert.equal(JSON.stringify(before), snapshot);
+});
+
+// --------------------------------------------------------------------------
+// Player migrations vs. tournament format and frozen history.
+// --------------------------------------------------------------------------
+function groupedFixture() {
+  return {
+    players: ['A', 'B', 'C', 'D'],
+    tournament: {
+      name: 'T',
+      groups: [
+        { name: 'G1', players: ['A', 'B'] },
+        { name: 'G2', players: ['C', 'D'] }
+      ],
+      extraPairs: ['A|C']
+    },
+    results: { 'A|B': [2, 0] },
+    schedule: {},
+    live: {},
+    resultsRecordedAt: { 'A|B': 't1' },
+    archive: [{
+      id: 'old', name: 'Old', players: ['A', 'B'], results: { 'A|B': [0, 2] }, resultsRecordedAt: {}
+    }]
+  };
+}
+
+test('migratePlayerRename: renames inside tournament groups and extraPairs', () => {
+  const out = migratePlayerRename(groupedFixture(), 'A', 'Z');
+  assert.deepEqual(out.tournament.groups[0].players, ['Z', 'B']);
+  assert.deepEqual(out.tournament.groups[1].players, ['C', 'D']);
+  assert.deepEqual(out.tournament.extraPairs, ['Z|C']);
+});
+
+test('migratePlayerRename: leaves the archive frozen', () => {
+  const out = migratePlayerRename(groupedFixture(), 'A', 'Z');
+  // History records who actually played — renaming today must not rewrite it.
+  assert.deepEqual(out.archive[0].players, ['A', 'B']);
+  assert.deepEqual(Object.keys(out.archive[0].results), ['A|B']);
+});
+
+test('migratePlayerDelete: removes player from their group and drops extraPairs', () => {
+  const out = migratePlayerDelete(groupedFixture(), 'A');
+  assert.deepEqual(out.tournament.groups[0].players, ['B']);
+  assert.deepEqual(out.tournament.extraPairs, []);
+  assert.equal(out.results['A|B'], undefined);
+});
+
+test('migratePlayerDelete: leaves the archive frozen', () => {
+  const out = migratePlayerDelete(groupedFixture(), 'A');
+  assert.deepEqual(out.archive[0].players, ['A', 'B']);
+  assert.deepEqual(out.archive[0].results, { 'A|B': [0, 2] });
+});
+
+test('migratePlayer*: no-op on tournament when there is none', () => {
+  const flat = { ...fixture(), tournament: null };
+  assert.equal(migratePlayerRename(flat, 'A', 'Z').tournament, null);
+  assert.equal(migratePlayerDelete(flat, 'A').tournament, null);
 });
 
 // --------------------------------------------------------------------------

@@ -275,3 +275,181 @@ test('POST /api/push/unsubscribe missing endpoint → 400 (when push enabled)', 
   const r = await request('POST', '/api/push/unsubscribe', { body: {} });
   assert.equal(r.status, 400);
 });
+
+// --------------------------------------------------------------------------
+// Group format + archive.
+//
+// These run last: they replace the whole tournament state via PUT /api/data,
+// which is exactly the Import path. Everything above operates on the flat
+// A/B/C roster seeded at the top of this file.
+// --------------------------------------------------------------------------
+async function adminToken() {
+  const auth = await request('POST', '/api/auth', { body: { password: 'integration-pass' } });
+  return auth.json.token;
+}
+
+const GROUPED_STATE = {
+  players: ['Сашо', 'Белев', 'Иво', 'Никата', 'Нако', 'Гого'],
+  tournament: {
+    name: 'Турнир лято 2026',
+    groups: [
+      { name: 'Група 1', players: ['Сашо', 'Белев', 'Иво'] },
+      { name: 'Група 2', players: ['Никата', 'Нако', 'Гого'] }
+    ],
+    extraPairs: []
+  },
+  results: {},
+  schedule: {},
+  live: {},
+  resultsRecordedAt: {},
+  archive: [{
+    id: 'spring-2026',
+    name: 'Турнир пролет 2026',
+    endedAt: '2026-07-31',
+    // Own roster, own canonical order — "Иво|Сашо" is correct here even though
+    // the active roster above would canonicalize it as "Сашо|Иво".
+    players: ['Иво', 'Сашо'],
+    results: { 'Иво|Сашо': [0, 2] },
+    resultsRecordedAt: { 'Иво|Сашо': '2026-06-28T08:28:04.215Z' },
+    groups: null
+  }]
+};
+
+test('PUT /api/data installs a grouped tournament + archive', async () => {
+  const token = await adminToken();
+  const r = await request('PUT', '/api/data', {
+    headers: { 'X-Admin-Token': token },
+    body: GROUPED_STATE
+  });
+  assert.equal(r.status, 200);
+
+  const got = await request('GET', '/api/data');
+  assert.equal(got.json.players.length, 6);
+  assert.equal(got.json.tournament.name, 'Турнир лято 2026');
+  assert.equal(got.json.tournament.groups.length, 2);
+  assert.equal(got.json.archive.length, 1);
+  assert.equal(got.json.archive[0].name, 'Турнир пролет 2026');
+});
+
+test('POST result for a WITHIN-group pair → 200', async () => {
+  const token = await adminToken();
+  const r = await request('POST', '/api/match/' + encodeURIComponent('Сашо|Белев') + '/result', {
+    headers: { 'X-Admin-Token': token },
+    body: { s1: 2, s2: 0 }
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.result, [2, 0]);
+});
+
+test('POST result for a CROSS-group pair → 404 (not a fixture)', async () => {
+  const token = await adminToken();
+  const r = await request('POST', '/api/match/' + encodeURIComponent('Сашо|Никата') + '/result', {
+    headers: { 'X-Admin-Token': token },
+    body: { s1: 2, s2: 0 }
+  });
+  assert.equal(r.status, 404);
+});
+
+test('POST /api/players requires a group when the tournament is split', async () => {
+  const token = await adminToken();
+  const r = await request('POST', '/api/players', {
+    headers: { 'X-Admin-Token': token },
+    body: { name: 'Безгрупов' }
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /group required/);
+});
+
+test('POST /api/players with an unknown group → 400', async () => {
+  const token = await adminToken();
+  const r = await request('POST', '/api/players', {
+    headers: { 'X-Admin-Token': token },
+    body: { name: 'Нов', group: 'Група 9' }
+  });
+  assert.equal(r.status, 400);
+});
+
+test('POST /api/players joins the named group', async () => {
+  const token = await adminToken();
+  const name = 'Нов-' + Date.now();
+  const r = await request('POST', '/api/players', {
+    headers: { 'X-Admin-Token': token },
+    body: { name, group: 'Група 2' }
+  });
+  assert.equal(r.status, 200);
+  assert.ok(r.json.players.includes(name));
+  const g2 = r.json.tournament.groups.find(g => g.name === 'Група 2');
+  assert.ok(g2.players.includes(name));
+  // Now a fixture against a Група 2 member exists...
+  const ok = await request('POST', '/api/match/' + encodeURIComponent('Никата|' + name) + '/result', {
+    headers: { 'X-Admin-Token': token },
+    body: { s1: 2, s2: 0 }
+  });
+  assert.equal(ok.status, 200);
+});
+
+test('PUT /api/data without archive/tournament keeps them (normal score write)', async () => {
+  const token = await adminToken();
+  const before = await request('GET', '/api/data');
+  const r = await request('PUT', '/api/data', {
+    headers: { 'X-Admin-Token': token },
+    body: {
+      results: before.json.results,
+      schedule: {},
+      live: {},
+      resultsRecordedAt: before.json.resultsRecordedAt
+    }
+  });
+  assert.equal(r.status, 200);
+  const after = await request('GET', '/api/data');
+  assert.equal(after.json.archive.length, 1);
+  assert.equal(after.json.tournament.name, 'Турнир лято 2026');
+  assert.deepEqual(after.json.players, before.json.players);
+});
+
+test('PUT /api/data rejects a cross-group result key', async () => {
+  const token = await adminToken();
+  const r = await request('PUT', '/api/data', {
+    headers: { 'X-Admin-Token': token },
+    body: {
+      results: { 'Сашо|Никата': [2, 0] },
+      schedule: {}, live: {}, resultsRecordedAt: {}
+    }
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /invalid result key/);
+});
+
+test('PUT /api/data rejects a group player who is not on the roster', async () => {
+  const token = await adminToken();
+  const r = await request('PUT', '/api/data', {
+    headers: { 'X-Admin-Token': token },
+    body: {
+      ...GROUPED_STATE,
+      tournament: {
+        name: 'Bad',
+        groups: [{ name: 'G1', players: ['Сашо', 'Непознат'] }],
+        extraPairs: []
+      }
+    }
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /not on roster/);
+});
+
+test('extraPairs enable the winners final without a code change', async () => {
+  const token = await adminToken();
+  const install = await request('PUT', '/api/data', {
+    headers: { 'X-Admin-Token': token },
+    body: {
+      ...GROUPED_STATE,
+      tournament: { ...GROUPED_STATE.tournament, extraPairs: ['Сашо|Никата'] }
+    }
+  });
+  assert.equal(install.status, 200);
+  const r = await request('POST', '/api/match/' + encodeURIComponent('Сашо|Никата') + '/result', {
+    headers: { 'X-Admin-Token': token },
+    body: { s1: 2, s2: 1 }
+  });
+  assert.equal(r.status, 200);
+});

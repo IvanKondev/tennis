@@ -1,3 +1,101 @@
+// ===== Pure tournament helpers =====
+//
+// Kept outside the Alpine component so the same code computes both the LIVE
+// tournament and any frozen ARCHIVE snapshot. An archived tournament carries
+// its own roster, so its keys stay readable however the active roster changes.
+
+// Canonical pair list for a tournament format.
+//
+// Group format → everyone plays everyone *within their own group*; cross-group
+// pairs are not fixtures. `extraPairs` holds the knockout stage between group
+// winners, added as data when that stage begins.
+// No groups → flat round-robin over the whole roster (the original behaviour).
+//
+// Pair order always follows the roster, so keys stay canonical ("P1|P2" where
+// P1 comes first in `players`).
+function tournamentPairs(players, groups, extraPairs) {
+  const out = [];
+  const addRoundRobin = (members, groupName) => {
+    const ordered = players.filter(p => members.includes(p));
+    for (let i = 0; i < ordered.length; i++) {
+      for (let j = i + 1; j < ordered.length; j++) {
+        out.push({ p1: ordered[i], p2: ordered[j], group: groupName, stage: 'group' });
+      }
+    }
+  };
+  if (groups && groups.length) {
+    for (const g of groups) addRoundRobin(g.players || [], g.name);
+  } else {
+    addRoundRobin(players, null);
+  }
+  for (const k of (extraPairs || [])) {
+    const [a, b] = String(k).split('|');
+    const ia = players.indexOf(a), ib = players.indexOf(b);
+    if (ia < 0 || ib < 0 || ia === ib) continue;
+    const p1 = ia < ib ? a : b, p2 = ia < ib ? b : a;
+    if (out.some(m => m.p1 === p1 && m.p2 === p2)) continue;
+    out.push({ p1, p2, group: null, stage: 'playoff' });
+  }
+  return out;
+}
+
+// Build the flat match array from a roster + results/schedule maps.
+function buildMatches(players, results, schedule, groups, extraPairs) {
+  const matches = [];
+  let num = 0;
+  for (const pair of tournamentPairs(players, groups, extraPairs)) {
+    const key = pair.p1 + '|' + pair.p2;
+    const r = results[key];
+    let s1 = null, s2 = null, played = false, winner = null, loser = null;
+    if (r) {
+      s1 = r[0]; s2 = r[1];
+      played = true;
+      if (s1 > s2) { winner = pair.p1; loser = pair.p2; }
+      else { winner = pair.p2; loser = pair.p1; }
+    }
+    num++;
+    matches.push({
+      num, key, p1: pair.p1, p2: pair.p2,
+      group: pair.group, stage: pair.stage,
+      s1, s2, played, winner, loser,
+      scheduledAt: (schedule && schedule[key]) || null
+    });
+  }
+  return matches;
+}
+
+// Standings for one roster over one set of matches. Only 'group' stage matches
+// count — a knockout final decides the title, it doesn't alter group tables.
+// Order: points → wins → set difference → sets won → name.
+function computeStandings(players, matches) {
+  const stats = {};
+  players.forEach(p => stats[p] = {
+    name: p, played: 0, wins: 0, losses: 0,
+    setsWon: 0, setsLost: 0, points: 0
+  });
+  for (const m of matches) {
+    if (!m.played || m.stage !== 'group') continue;
+    const a = stats[m.p1], b = stats[m.p2];
+    if (!a || !b) continue;
+    a.played++; b.played++;
+    a.setsWon += m.s1; a.setsLost += m.s2;
+    b.setsWon += m.s2; b.setsLost += m.s1;
+    if (m.winner === m.p1) { a.wins++; a.points++; b.losses++; }
+    else { b.wins++; b.points++; a.losses++; }
+  }
+  const list = Object.values(stats).sort((x, y) => {
+    if (y.points !== x.points) return y.points - x.points;
+    if (y.wins !== x.wins) return y.wins - x.wins;
+    const dx = x.setsWon - x.setsLost;
+    const dy = y.setsWon - y.setsLost;
+    if (dy !== dx) return dy - dx;
+    if (y.setsWon !== x.setsWon) return y.setsWon - x.setsWon;
+    return x.name.localeCompare(y.name, 'bg');
+  });
+  list.forEach((s, idx) => { s.rank = idx + 1; });
+  return list;
+}
+
 document.addEventListener('alpine:init', () => {
   Alpine.data('tennisApp', () => ({
     // ======= STATE =======
@@ -7,6 +105,16 @@ document.addEventListener('alpine:init', () => {
     // POST /api/players (addPlayer action). Adding a player auto-expands the
     // round-robin: recomputeDerived generates pair combinations from this list.
     players: PLAYERS.slice(),
+    // Active tournament descriptor: { name, groups: [{name, players}], extraPairs }.
+    // null = flat round-robin over the whole roster (the original format, and
+    // what local/file:// mode falls back to).
+    tournament: null,
+    // Frozen snapshots of finished tournaments, newest last. Read-only — the
+    // history view renders them, nothing ever writes back into them.
+    archive: [],
+    // Which archived tournament the history view is showing (id), or null for
+    // the most recent one.
+    historyId: null,
     results: {},
     schedule: {},
     live: {},
@@ -26,6 +134,7 @@ document.addEventListener('alpine:init', () => {
 
     // Admin: players management
     newPlayerName: '',
+    newPlayerGroup: '',
     addPlayerError: '',
     playersExpanded: false,
     playerSearch: '',
@@ -45,6 +154,8 @@ document.addEventListener('alpine:init', () => {
     adminMenuOpen: false,         // ⋯ overflow menu (refresh/export/etc)
     adminPlayersOpen: false,      // players drawer (rare action, hidden)
     adminAboutOpen: false,        // backend mode + version detail sheet
+    adminImportOpen: false,       // import warning sheet (guards a full overwrite)
+    importHolding: false,         // long-press on Експорт in progress (fills a bar)
     adminMatchActions: null,      // bottom sheet for secondary match actions
     adminFutureExpanded: false,   // collapsible "future matches" section
     adminPlayedExpanded: false,   // collapsible "played matches" section
@@ -121,6 +232,9 @@ document.addEventListener('alpine:init', () => {
     playedMatches: [],
     scheduledMatches: [],
     standings: [],
+    // [{ name, rows }] — one entry per group, or a single {name: null} entry
+    // when the tournament isn't split into groups.
+    standingsByGroup: [],
 
     // Web Push state. supported=false hides the UI button entirely (e.g. on
     // iOS Safari without PWA install). permission tracks the browser-level
@@ -175,6 +289,10 @@ document.addEventListener('alpine:init', () => {
       // through addPlayer (POST /api/players). Recompute matches/standings
       // when the list changes (e.g. a poll picked up a new addition).
       this.$watch('players', () => this.recomputeDerived());
+      // Tournament format (group split, playoff pairs) also determines which
+      // pairs are fixtures at all — a poll picking up a new format must
+      // rebuild matches and standings.
+      this.$watch('tournament', () => this.recomputeDerived());
       // Live state: localStorage only (server is updated via dedicated endpoint).
       // Without this, refreshing in local mode loses any in-progress live score.
       this.$watch('live', () => this.persistLocal());
@@ -244,34 +362,49 @@ document.addEventListener('alpine:init', () => {
       return null;
     },
 
+    // ===== Tournament format =====
+    // Groups of the ACTIVE tournament, or null when it's a flat round-robin.
+    get groups() {
+      const t = this.tournament;
+      return (t && Array.isArray(t.groups) && t.groups.length) ? t.groups : null;
+    },
+
+    get hasGroups() {
+      return this.groups !== null;
+    },
+
+    get tournamentName() {
+      return (this.tournament && this.tournament.name) || '';
+    },
+
+    groupOf(name) {
+      const groups = this.groups;
+      if (!groups) return null;
+      const g = groups.find(x => (x.players || []).includes(name));
+      return g ? g.name : null;
+    },
+
+    // Everyone a player can actually face in the group stage: their group when
+    // the tournament is split, otherwise the whole roster. Every view that used
+    // to walk `this.players` to list opponents must go through this, or
+    // cross-group players show up as "not played yet" fixtures that don't exist.
+    rosterFor(name) {
+      const groups = this.groups;
+      if (!groups) return this.players;
+      const g = groups.find(x => (x.players || []).includes(name));
+      return g ? this.players.filter(p => (g.players || []).includes(p)) : [name];
+    },
+
     recomputeDerived() {
-      // Build matches array as the round-robin combinations of the current
-      // player list. Adding a player to `this.players` automatically appends
-      // their new pairings to the end (preserving num for existing matches).
+      // Build the match array for the current tournament format. With groups,
+      // only within-group pairs are fixtures (plus any playoff extraPairs);
+      // without groups it's a flat round-robin, as before. Adding a player
+      // automatically appends their new pairings.
       const players = this.players;
-      const matches = [];
-      let num = 0;
-      for (let i = 0; i < players.length; i++) {
-        for (let j = i + 1; j < players.length; j++) {
-          const p1 = players[i], p2 = players[j];
-          const key = p1 + '|' + p2;
-          const r = this.results[key];
-          const sched = this.schedule[key];
-          let s1 = null, s2 = null, played = false, winner = null, loser = null;
-          if (r) {
-            s1 = r[0]; s2 = r[1];
-            played = true;
-            if (s1 > s2) { winner = p1; loser = p2; }
-            else { winner = p2; loser = p1; }
-          }
-          num++;
-          matches.push({
-            num, key, p1, p2,
-            s1, s2, played, winner, loser,
-            scheduledAt: sched || null
-          });
-        }
-      }
+      const matches = buildMatches(
+        players, this.results, this.schedule,
+        this.groups, this.tournament && this.tournament.extraPairs
+      );
 
       // Lookup map for O(1) matchBetween
       const byPair = {};
@@ -304,39 +437,33 @@ document.addEventListener('alpine:init', () => {
         .filter(m => !m.played && m.scheduledAt)
         .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
 
-      // Standings
-      const stats = {};
-      this.players.forEach(p => stats[p] = {
-        name: p, played: 0, wins: 0, losses: 0,
-        setsWon: 0, setsLost: 0, points: 0
-      });
-      for (const m of matches) {
-        if (!m.played) continue;
-        const a = stats[m.p1], b = stats[m.p2];
-        a.played++; b.played++;
-        a.setsWon += m.s1; a.setsLost += m.s2;
-        b.setsWon += m.s2; b.setsLost += m.s1;
-        if (m.winner === m.p1) { a.wins++; a.points++; b.losses++; }
-        else { b.wins++; b.points++; a.losses++; }
+      // Standings — one table per group (a single unnamed table when the
+      // tournament isn't split). Rank is WITHIN the group: with separate group
+      // round-robins a cross-group ranking would compare incomparable records.
+      const groups = this.groups;
+      const standingsByGroup = (groups && groups.length)
+        ? groups.map(g => ({
+            name: g.name,
+            rows: computeStandings(
+              this.players.filter(p => (g.players || []).includes(p)),
+              matches.filter(m => m.group === g.name)
+            )
+          }))
+        : [{ name: null, rows: computeStandings(this.players, matches) }];
+
+      // Flat list for the views that walk every player (duels, search,
+      // jumpToPlayer). Each row carries its group so the UI can label it.
+      const standings = [];
+      for (const g of standingsByGroup) {
+        for (const s of g.rows) standings.push({ ...s, group: g.name });
       }
-      const standings = Object.values(stats).sort((x, y) => {
-        if (y.points !== x.points) return y.points - x.points;
-        if (y.wins !== x.wins) return y.wins - x.wins;
-        const dx = x.setsWon - x.setsLost;
-        const dy = y.setsWon - y.setsLost;
-        if (dy !== dx) return dy - dx;
-        if (y.setsWon !== x.setsWon) return y.setsWon - x.setsWon;
-        return x.name.localeCompare(y.name, 'bg');
-      });
-      // Stamp the global rank on each standings entry so filtered views (the
-      // duels search) can still show "rank 7" instead of "rank 1 of filtered".
-      standings.forEach((s, idx) => { s.rank = idx + 1; });
 
       this.matches = matches;
       this.matchByPair = byPair;
       this.playedMatches = playedMatches;
       this.scheduledMatches = scheduledMatches;
       this.standings = standings;
+      this.standingsByGroup = standingsByGroup;
     },
 
     async detectBackend() {
@@ -364,6 +491,8 @@ document.addEventListener('alpine:init', () => {
             this.live = data.live || {};
             this.resultsRecordedAt = data.resultsRecordedAt || {};
             if (Array.isArray(data.players) && data.players.length) this.players = data.players;
+            this.tournament = data.tournament || null;
+            this.archive = Array.isArray(data.archive) ? data.archive : [];
 
             // Recover live state where local is newer than server's
             // (e.g. user added a game but POST didn't reach server before refresh)
@@ -383,6 +512,8 @@ document.addEventListener('alpine:init', () => {
           this.live = data.live || {};
           this.resultsRecordedAt = data.resultsRecordedAt || {};
           if (Array.isArray(data.players) && data.players.length) this.players = data.players;
+          this.tournament = data.tournament || null;
+          this.archive = Array.isArray(data.archive) ? data.archive : [];
           this.passwordHash = data.passwordHash || null;
           return;
         }
@@ -402,6 +533,8 @@ document.addEventListener('alpine:init', () => {
     persistLocal() {
       localStorage.setItem('tennis-v1', JSON.stringify({
         players: this.players,
+        tournament: this.tournament,
+        archive: this.archive,
         results: this.results,
         schedule: this.schedule,
         live: this.live,
@@ -549,6 +682,8 @@ document.addEventListener('alpine:init', () => {
 
         this._fromServer = true;
         if (Array.isArray(data.players) && data.players.length) this.players = data.players;
+        this.tournament = data.tournament || null;
+        this.archive = Array.isArray(data.archive) ? data.archive : [];
         this.results = mergedResults;
         this.schedule = data.schedule || {};
         this.live = mergedLive;
@@ -813,11 +948,45 @@ document.addEventListener('alpine:init', () => {
       return q ? sorted.filter(s => s.name.toLowerCase().includes(q)) : sorted;
     },
 
+    // The same active/inactive split, but one bucket per group — this is what
+    // the standings view renders. A single {name: null} entry when the
+    // tournament isn't split, so the markup is identical in both formats.
+    get standingsGroupsView() {
+      const q = (this.duelSearch || '').trim().toLowerCase();
+      const hit = s => !q || s.name.toLowerCase().includes(q);
+      const byName = (a, b) => a.name.localeCompare(b.name, 'bg');
+      return this.standingsByGroup.map(g => {
+        // Before the first match of a group there is nothing to rank, and
+        // dumping the whole lineup under a "no matches" separator reads as an
+        // empty page. Show it as a plain starting lineup instead.
+        const started = g.rows.some(s => s.played > 0);
+        if (!started) {
+          return {
+            name: g.name,
+            started: false,
+            active: g.rows.filter(hit).slice().sort(byName),
+            inactive: []
+          };
+        }
+        return {
+          name: g.name,
+          started: true,
+          active: g.rows.filter(s => s.played > 0 && hit(s)),
+          inactive: g.rows.filter(s => !s.played && hit(s)).sort(byName)
+        };
+      });
+    },
+
+    // True when a search query matched nobody in any group.
+    get standingsNoMatches() {
+      return this.standingsGroupsView.every(g => !g.active.length && !g.inactive.length);
+    },
+
     // Group opponents by status for the expanded card. Sorted within each
     // bucket by name. Pending bucket is collapsible to keep the card tight.
     duelOpponentsGrouped(p) {
       const wins = [], losses = [], scheduled = [], pending = [];
-      for (const op of this.players) {
+      for (const op of this.rosterFor(p)) {
         if (op === p) continue;
         const m = this.matchBetween(p, op);
         if (m && m.played) {
@@ -847,14 +1016,15 @@ document.addEventListener('alpine:init', () => {
     // is players.length - 1 (round-robin: everyone plays everyone once).
     duelProgressRate(s) {
       if (!s) return 0;
-      const total = Math.max(1, this.players.length - 1);
+      const total = Math.max(1, this.rosterFor(s.name).length - 1);
       return Math.min(1, s.played / total);
     },
 
-    // "5 / 19" — for the bar title.
+    // "3 / 4" — for the bar title. Denominator is the player's own group size,
+    // not the whole roster, so a 5-player group reads "x / 4".
     duelProgressLabel(s) {
       if (!s) return '';
-      const total = Math.max(0, this.players.length - 1);
+      const total = Math.max(0, this.rosterFor(s.name).length - 1);
       return `${s.played} / ${total}`;
     },
 
@@ -871,7 +1041,7 @@ document.addEventListener('alpine:init', () => {
 
     duelOpponents(p) {
       // Sort: played wins first, then losses, then scheduled, then pending
-      return this.players
+      return this.rosterFor(p)
         .filter(x => x !== p)
         .sort((a, b) => {
           const ma = this.matchBetween(p, a);
@@ -889,7 +1059,7 @@ document.addEventListener('alpine:init', () => {
 
     h2hRowSummary(rowP) {
       let wins = 0, losses = 0;
-      this.players.forEach(colP => {
+      this.rosterFor(rowP).forEach(colP => {
         if (rowP === colP) return;
         const m = this.matchBetween(rowP, colP);
         if (!m || !m.played) return;
@@ -918,12 +1088,16 @@ document.addEventListener('alpine:init', () => {
     //   list. Client takes the response as authoritative.
     // - local mode: just append locally; persistLocal will pick it up via the
     //   players watcher (no server to talk to).
-    async addPlayer(rawName) {
+    // When the tournament is split into groups, a new player must join one —
+    // otherwise they'd sit on the roster with no possible fixtures.
+    async addPlayer(rawName, rawGroup) {
       const name = (rawName || '').trim();
       if (!name) return { ok: false, error: 'Името е задължително' };
       if (name.length > 40) return { ok: false, error: 'Името е твърде дълго' };
       if (name.includes('|')) return { ok: false, error: 'Името не може да съдържа "|"' };
       if (this.players.includes(name)) return { ok: false, error: 'Играчът вече съществува' };
+      const group = (rawGroup || '').trim();
+      if (this.hasGroups && !group) return { ok: false, error: 'Избери група' };
 
       if (this.backendMode === 'api') {
         if (!this._adminToken) return { ok: false, error: 'Необходима е админ парола' };
@@ -931,11 +1105,12 @@ document.addEventListener('alpine:init', () => {
           const r = await fetch(this.apiBase + '/players', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this._adminToken },
-            body: JSON.stringify({ name })
+            body: JSON.stringify(group ? { name, group } : { name })
           });
           const data = await r.json().catch(() => ({}));
           if (r.status === 401) { this._handleAdminUnauthorized(); return { ok: false, error: 'Сесията изтече' }; }
           if (!r.ok) return { ok: false, error: data.error || 'Грешка при запис' };
+          if (data.tournament !== undefined) this.tournament = data.tournament;
           this.players = data.players;
           this.showToast('✓ Добавен: ' + name);
           return { ok: true };
@@ -944,6 +1119,14 @@ document.addEventListener('alpine:init', () => {
         }
       }
       // local mode
+      if (this.hasGroups) {
+        this.tournament = {
+          ...this.tournament,
+          groups: this.groups.map(g => g.name === group
+            ? { ...g, players: [...g.players, name] }
+            : g)
+        };
+      }
       this.players = [...this.players, name];
       this.persistLocal();
       this.showToast('✓ Добавен: ' + name);
@@ -1068,6 +1251,8 @@ document.addEventListener('alpine:init', () => {
         const data = await r.json();
         this._fromServer = true;
         if (Array.isArray(data.players) && data.players.length) this.players = data.players;
+        this.tournament = data.tournament || null;
+        this.archive = Array.isArray(data.archive) ? data.archive : [];
         this.results = data.results || {};
         this.schedule = data.schedule || {};
         this.live = data.live || {};
@@ -1209,7 +1394,9 @@ document.addEventListener('alpine:init', () => {
     get wizardOpponents() {
       const a = this.wizard.playerA;
       if (!a) return [];
-      return this.players
+      // Only real fixtures: within the player's own group (plus any playoff
+      // pair), never someone they can't be drawn against.
+      return this.rosterFor(a)
         .filter(p => p !== a)
         .map(p => {
           const m = this.matchBetween(a, p);
@@ -1471,6 +1658,14 @@ document.addEventListener('alpine:init', () => {
         weekday: 'short', day: 'numeric', month: 'short',
         hour: '2-digit', minute: '2-digit'
       });
+    },
+
+    // "12 юли" — date only, for archive rows where the time of day is noise.
+    formatDateShort(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleDateString('bg-BG', { day: 'numeric', month: 'short' });
     },
 
     formatDateLong(iso) {
@@ -2383,10 +2578,128 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
+    // ======= HISTORY (archived tournaments) =======
+    //
+    // An archive entry is a frozen snapshot: { id, name, endedAt, players,
+    // results, resultsRecordedAt, groups }. It carries its OWN roster, because
+    // canonical key order depends on roster position — "Иво|Сашо" was correct
+    // under last season's 21-player list even though today's list would make it
+    // "Сашо|Иво". Reading a snapshot with its own roster keeps old keys valid
+    // forever. Nothing here ever writes back.
+
+    // Newest first.
+    get historyList() {
+      return [...this.archive].reverse();
+    },
+
+    get historyCurrent() {
+      if (!this.archive.length) return null;
+      if (this.historyId) {
+        const found = this.archive.find(t => t.id === this.historyId);
+        if (found) return found;
+      }
+      return this.archive[this.archive.length - 1];
+    },
+
+    // Matches of the selected snapshot, using the snapshot's own roster/format.
+    get historyMatches() {
+      const t = this.historyCurrent;
+      if (!t) return [];
+      return buildMatches(t.players, t.results || {}, {}, t.groups, t.extraPairs);
+    },
+
+    // [{ name, rows }] — mirrors standingsByGroup so the same markup renders both.
+    get historyStandings() {
+      const t = this.historyCurrent;
+      if (!t) return [];
+      const matches = this.historyMatches;
+      if (Array.isArray(t.groups) && t.groups.length) {
+        return t.groups.map(g => ({
+          name: g.name,
+          rows: computeStandings(
+            t.players.filter(p => (g.players || []).includes(p)),
+            matches.filter(m => m.group === g.name)
+          )
+        }));
+      }
+      return [{ name: null, rows: computeStandings(t.players, matches) }];
+    },
+
+    // Played matches, most recently recorded first. Snapshots without a
+    // timestamp keep their fixture order at the end — we never invent dates.
+    get historyResults() {
+      const t = this.historyCurrent;
+      if (!t) return [];
+      const recAt = t.resultsRecordedAt || {};
+      return this.historyMatches
+        .filter(m => m.played)
+        .sort((a, b) => {
+          const ta = recAt[a.key] || '', tb = recAt[b.key] || '';
+          if (ta && tb) return tb.localeCompare(ta);
+          if (ta) return -1;
+          if (tb) return 1;
+          return a.num - b.num;
+        })
+        .map(m => ({ ...m, recordedAt: recAt[m.key] || null }));
+    },
+
+    get historyStats() {
+      const t = this.historyCurrent;
+      if (!t) return null;
+      const all = this.historyMatches;
+      return {
+        players: t.players.length,
+        played: all.filter(m => m.played).length,
+        total: all.length
+      };
+    },
+
+    openHistory(id) {
+      this.historyId = id || null;
+      this.view = 'history';
+    },
+
     // ======= EXPORT / IMPORT =======
+
+    // Импортът е скрит зад задържане на „Експорт“. Мотив: той презаписва
+    // резултати, състав, формат и история наведнъж, а като обикновен ред в
+    // менюто стоеше на един случаен тап разстояние от необратима загуба.
+    // Задържането е нарочно недокументирано в UI-а — само собственикът го знае.
+    IMPORT_HOLD_MS: 1500,
+
+    importHoldStart() {
+      this._importHoldFired = false;
+      clearTimeout(this._importHoldTimer);
+      this.importHolding = true;
+      this._importHoldTimer = setTimeout(() => {
+        this._importHoldFired = true;   // swallows the click that follows pointerup
+        this.importHolding = false;
+        if (navigator.vibrate) navigator.vibrate(30);
+        this.adminMenuOpen = false;
+        this.adminImportOpen = true;
+      }, this.IMPORT_HOLD_MS);
+    },
+
+    importHoldCancel() {
+      clearTimeout(this._importHoldTimer);
+      this._importHoldTimer = null;
+      this.importHolding = false;
+    },
+
+    // Click on „Експорт“: a normal tap exports; a tap that merely ended a
+    // completed long-press is swallowed, so the import sheet doesn't also
+    // download a file behind it.
+    exportTap() {
+      if (this._importHoldFired) { this._importHoldFired = false; return; }
+      this.adminMenuOpen = false;
+      this.exportData();
+    },
+
     exportData() {
       const data = JSON.stringify({
         players: this.players,
+        tournament: this.tournament,
+        archive: this.archive,
         results: this.results,
         schedule: this.schedule,
         live: this.live,
@@ -2402,22 +2715,59 @@ document.addEventListener('alpine:init', () => {
       URL.revokeObjectURL(url);
     },
 
+    // Restore a full backup. Unlike a normal score write (which lets the
+    // `results` watcher fire persist() and inherits roster/format from the
+    // server), an import must be able to replace the roster, the tournament
+    // format and the archive — otherwise restoring last season's file would
+    // keep this season's players. So it PUTs the whole state explicitly.
     importData(event) {
       const file = event.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = e => {
+      reader.onload = async e => {
         try {
           const data = JSON.parse(e.target.result);
           if (!data.results) throw new Error('Невалиден файл');
           if (!confirm('Това ще замени текущите данни. Продължи?')) return;
-          if (Array.isArray(data.players) && data.players.length) this.players = data.players;
-          this.results = data.results;
-          this.schedule = data.schedule || {};
-          this.live = data.live || {};
-          this.resultsRecordedAt = data.resultsRecordedAt || {};
+
+          const payload = {
+            results: data.results,
+            schedule: data.schedule || {},
+            live: data.live || {},
+            resultsRecordedAt: data.resultsRecordedAt || {}
+          };
+          if (Array.isArray(data.players) && data.players.length) payload.players = data.players;
+          if (data.tournament !== undefined) payload.tournament = data.tournament || null;
+          if (Array.isArray(data.archive)) payload.archive = data.archive;
+
+          if (this.backendMode === 'api') {
+            if (!this._adminToken) throw new Error('Няма админ сесия');
+            const r = await fetch(this.apiBase + '/data', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this._adminToken },
+              body: JSON.stringify(payload)
+            });
+            if (r.status === 401) { this._handleAdminUnauthorized(); throw new Error('Няма права'); }
+            if (!r.ok) {
+              let msg = 'HTTP ' + r.status;
+              try { msg = (await r.json()).error || msg; } catch (_) {}
+              throw new Error(msg);
+            }
+            // Server is authoritative — pull back what it actually stored.
+            await this._refetchAll();
+            this.recomputeDerived();
+          } else {
+            if (payload.players) this.players = payload.players;
+            if (payload.tournament !== undefined) this.tournament = payload.tournament;
+            if (payload.archive) this.archive = payload.archive;
+            this.schedule = payload.schedule;
+            this.live = payload.live;
+            this.resultsRecordedAt = payload.resultsRecordedAt;
+            this.results = payload.results;
+          }
+          this.showToast('✅ Данните са импортирани');
         } catch (err) {
-          alert('Грешка при четене: ' + err.message);
+          alert('Грешка при импорт: ' + err.message);
         }
       };
       reader.readAsText(file);

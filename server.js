@@ -56,12 +56,203 @@ function buildValidKeys(players) {
   return set;
 }
 
+// Canonicalize a pair against the roster order: the player appearing earlier in
+// `players` comes first. Returns null if either name is not on the roster.
+function canonicalPair(players, a, b) {
+  const ia = players.indexOf(a), ib = players.indexOf(b);
+  if (ia < 0 || ib < 0 || ia === ib) return null;
+  return ia < ib ? a + '|' + b : b + '|' + a;
+}
+
+// The set of pair keys this tournament actually allows.
+//
+// Group format (data.tournament.groups): everyone plays everyone *within their
+// own group* — cross-group pairs are NOT valid matches and are rejected by
+// every key-bearing endpoint. The knockout stage between group winners is
+// expressed as explicit entries in `tournament.extraPairs`, so adding the final
+// later is a data change, not a code change.
+//
+// No groups (legacy / archived flat tournaments) → full round-robin over the
+// whole roster, i.e. the previous behaviour.
+function buildValidPairs(data) {
+  const players = data.players || [];
+  const groups = data.tournament && Array.isArray(data.tournament.groups)
+    ? data.tournament.groups : null;
+  if (!groups || groups.length === 0) return buildValidKeys(players);
+
+  const set = new Set();
+  for (const g of groups) {
+    const members = Array.isArray(g && g.players) ? g.players : [];
+    for (let i = 0; i < members.length; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        const key = canonicalPair(players, members[i], members[j]);
+        if (key) set.add(key);
+      }
+    }
+  }
+  const extra = Array.isArray(data.tournament.extraPairs) ? data.tournament.extraPairs : [];
+  for (const k of extra) {
+    if (typeof k !== 'string') continue;
+    const [a, b] = k.split('|');
+    const key = canonicalPair(players, a, b);
+    if (key) set.add(key);
+  }
+  return set;
+}
+
+// Player-name rules, shared by POST /api/players and the roster validator.
+// "|" is the match-key separator, so it can never appear in a name.
+function validatePlayerName(raw) {
+  const name = typeof raw === 'string' ? raw.trim() : '';
+  if (!name) return { ok: false, error: 'name required' };
+  if (name.length > 40) return { ok: false, error: 'name too long' };
+  if (name.includes('|')) return { ok: false, error: 'name cannot contain "|"' };
+  return { ok: true, name };
+}
+
+function validateRoster(raw) {
+  if (!Array.isArray(raw) || raw.length < 2) return { ok: false, error: 'players must be an array of at least 2' };
+  const players = [];
+  for (const p of raw) {
+    const v = validatePlayerName(p);
+    if (!v.ok) return { ok: false, error: 'invalid player: ' + v.error };
+    if (players.includes(v.name)) return { ok: false, error: 'duplicate player: ' + v.name };
+    players.push(v.name);
+  }
+  return { ok: true, players };
+}
+
+// A tournament is either null (flat round-robin over the whole roster) or a
+// {name, groups[], extraPairs[]} descriptor. Every group member and every
+// extraPairs endpoint must be on the roster, otherwise buildValidPairs would
+// silently drop fixtures.
+function validateTournament(raw, players) {
+  if (raw === null) return { ok: true, tournament: null };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'invalid tournament' };
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (!name) return { ok: false, error: 'tournament name required' };
+  if (name.length > 80) return { ok: false, error: 'tournament name too long' };
+
+  let groups = null;
+  if (raw.groups !== undefined && raw.groups !== null) {
+    if (!Array.isArray(raw.groups)) return { ok: false, error: 'tournament.groups must be an array' };
+    groups = [];
+    const seen = new Set();
+    for (const g of raw.groups) {
+      if (!g || typeof g !== 'object') return { ok: false, error: 'invalid group' };
+      const gName = typeof g.name === 'string' ? g.name.trim() : '';
+      if (!gName) return { ok: false, error: 'group name required' };
+      if (!Array.isArray(g.players) || g.players.length < 2) {
+        return { ok: false, error: 'group "' + gName + '" needs at least 2 players' };
+      }
+      for (const p of g.players) {
+        if (!players.includes(p)) return { ok: false, error: 'group player not on roster: ' + p };
+        if (seen.has(p)) return { ok: false, error: 'player in two groups: ' + p };
+        seen.add(p);
+      }
+      groups.push({ name: gName, players: g.players.slice() });
+    }
+  }
+
+  const extraPairs = [];
+  if (raw.extraPairs !== undefined && raw.extraPairs !== null) {
+    if (!Array.isArray(raw.extraPairs)) return { ok: false, error: 'tournament.extraPairs must be an array' };
+    for (const k of raw.extraPairs) {
+      if (typeof k !== 'string') return { ok: false, error: 'invalid extraPair' };
+      const [a, b] = k.split('|');
+      const canon = canonicalPair(players, a, b);
+      if (!canon) return { ok: false, error: 'invalid extraPair: ' + k };
+      if (!extraPairs.includes(canon)) extraPairs.push(canon);
+    }
+  }
+  return { ok: true, tournament: { name, groups, extraPairs } };
+}
+
+// Archived tournaments are frozen snapshots. They carry their own roster, so
+// their keys stay readable no matter how the active roster changes later.
+function validateArchive(raw) {
+  if (!Array.isArray(raw)) return { ok: false, error: 'archive must be an array' };
+  const archive = [];
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') return { ok: false, error: 'invalid archive entry' };
+    const id = typeof t.id === 'string' ? t.id.trim() : '';
+    const name = typeof t.name === 'string' ? t.name.trim() : '';
+    if (!id) return { ok: false, error: 'archive entry needs an id' };
+    if (!name) return { ok: false, error: 'archive entry needs a name' };
+    if (archive.some(e => e.id === id)) return { ok: false, error: 'duplicate archive id: ' + id };
+    const pv = validateRoster(t.players);
+    if (!pv.ok) return { ok: false, error: 'archive "' + id + '": ' + pv.error };
+    if (!t.results || typeof t.results !== 'object') return { ok: false, error: 'archive "' + id + '" needs results' };
+    const validKeys = buildValidKeys(pv.players);
+    for (const k in t.results) {
+      if (!validKeys.has(k)) return { ok: false, error: 'archive "' + id + '": invalid result key ' + k };
+    }
+    archive.push({
+      id,
+      name,
+      endedAt: typeof t.endedAt === 'string' ? t.endedAt : null,
+      players: pv.players,
+      results: t.results,
+      resultsRecordedAt: (t.resultsRecordedAt && typeof t.resultsRecordedAt === 'object') ? t.resultsRecordedAt : {},
+      groups: Array.isArray(t.groups) ? t.groups : null
+    });
+  }
+  return { ok: true, archive };
+}
+
 // Pure data transforms for player rename / delete. The HTTP handlers call
 // these inside their atomic critical section; tests exercise them directly.
 //
 // Rename preserves the player's index in the list, so "P1|P2" canonical key
 // ordering is stable — only the substring swaps. Delete cascades through all
 // four maps to remove every match the player participated in.
+//
+// Both also rewrite `tournament.groups[].players` and `tournament.extraPairs`.
+// Neither touches `archive` — an archived tournament is a frozen historical
+// record and carries its own roster, so renaming a player today must not
+// rewrite who played whom last season.
+function migrateTournamentRename(tournament, oldName, newName) {
+  if (!tournament) return tournament;
+  const renameKey = (k) => {
+    const [a, b] = String(k).split('|');
+    if (a === oldName) return newName + '|' + b;
+    if (b === oldName) return a + '|' + newName;
+    return k;
+  };
+  return {
+    ...tournament,
+    groups: Array.isArray(tournament.groups)
+      ? tournament.groups.map(g => ({
+          ...g,
+          players: (g.players || []).map(p => p === oldName ? newName : p)
+        }))
+      : tournament.groups,
+    extraPairs: Array.isArray(tournament.extraPairs)
+      ? tournament.extraPairs.map(renameKey)
+      : tournament.extraPairs
+  };
+}
+
+function migrateTournamentDelete(tournament, name) {
+  if (!tournament) return tournament;
+  const involves = (k) => {
+    const [a, b] = String(k).split('|');
+    return a === name || b === name;
+  };
+  return {
+    ...tournament,
+    groups: Array.isArray(tournament.groups)
+      ? tournament.groups.map(g => ({
+          ...g,
+          players: (g.players || []).filter(p => p !== name)
+        }))
+      : tournament.groups,
+    extraPairs: Array.isArray(tournament.extraPairs)
+      ? tournament.extraPairs.filter(k => !involves(k))
+      : tournament.extraPairs
+  };
+}
+
 function migratePlayerRename(data, oldName, newName) {
   const renameKey = (k) => {
     const [a, b] = k.split('|');
@@ -77,6 +268,7 @@ function migratePlayerRename(data, oldName, newName) {
   return {
     ...data,
     players: data.players.map(p => p === oldName ? newName : p),
+    tournament: migrateTournamentRename(data.tournament, oldName, newName),
     results: remap(data.results),
     schedule: remap(data.schedule),
     live: remap(data.live),
@@ -97,6 +289,7 @@ function migratePlayerDelete(data, name) {
   return {
     ...data,
     players: data.players.filter(p => p !== name),
+    tournament: migrateTournamentDelete(data.tournament, name),
     results: filterKeys(data.results),
     schedule: filterKeys(data.schedule),
     live: filterKeys(data.live),
@@ -260,6 +453,12 @@ function readData() {
   if (!Array.isArray(d.players) || d.players.length === 0) d.players = PLAYERS.slice();
   if (!Array.isArray(d.pushSubscriptions)) d.pushSubscriptions = [];
   if (!d.reminderSent || typeof d.reminderSent !== 'object') d.reminderSent = {};
+  // Active tournament descriptor (name + group split). null = legacy flat
+  // round-robin over the whole roster. Absent on pre-groups data files; we
+  // default it rather than migrating, so opening the page never rewrites data.
+  if (!d.tournament || typeof d.tournament !== 'object') d.tournament = null;
+  // Frozen snapshots of finished tournaments. Read-only history.
+  if (!Array.isArray(d.archive)) d.archive = [];
   return d;
 }
 
@@ -846,13 +1045,39 @@ const server = http.createServer(async (req, res) => {
       if (typeof incoming !== 'object' || !incoming.results || !incoming.schedule) {
         return json(res, 400, { error: 'invalid payload' });
       }
-      // Reject unknown keys — only canonical pairs derivable from the current
-      // player list are allowed. Defense in depth: even an authenticated client
-      // shouldn't be able to write junk pairs (typo, swapped order) into state.
-      // The player list itself is authoritative here — we don't trust the
-      // client to add players via a /api/data PUT (use POST /api/players).
+      // Reject unknown keys — only canonical pairs allowed by the tournament
+      // format may be written. Defense in depth: even an authenticated client
+      // shouldn't be able to write junk pairs (typo, swapped order, or a
+      // cross-group pair that isn't a real fixture) into state.
+      //
+      // Roster / tournament / archive are OPTIONAL here. Omitted → inherited
+      // from disk (the common case: a normal score write). Supplied → this is
+      // an Import/restore, which must be able to replace the whole tournament,
+      // otherwise restoring a backup would silently keep the old roster.
       const existing = readData();
-      const validKeys = buildValidKeys(existing.players);
+
+      let players = existing.players;
+      if (incoming.players !== undefined) {
+        const pv = validateRoster(incoming.players);
+        if (!pv.ok) return json(res, 400, { error: pv.error });
+        players = pv.players;
+      }
+
+      let tournament = existing.tournament;
+      if (incoming.tournament !== undefined) {
+        const tv = validateTournament(incoming.tournament, players);
+        if (!tv.ok) return json(res, 400, { error: tv.error });
+        tournament = tv.tournament;
+      }
+
+      let archive = existing.archive;
+      if (incoming.archive !== undefined) {
+        const av = validateArchive(incoming.archive);
+        if (!av.ok) return json(res, 400, { error: av.error });
+        archive = av.archive;
+      }
+
+      const validKeys = buildValidPairs({ players, tournament });
       for (const k in incoming.results) {
         if (!validKeys.has(k)) return json(res, 400, { error: 'invalid result key: ' + k });
         const r = incoming.results[k];
@@ -890,36 +1115,64 @@ const server = http.createServer(async (req, res) => {
         schedule: incoming.schedule,
         live: sanitizedLive,
         resultsRecordedAt: recordedIn,
-        players: existing.players,
-        pushSubscriptions: existing.pushSubscriptions
+        players,
+        tournament,
+        archive,
+        pushSubscriptions: existing.pushSubscriptions,
+        // Reminder bookkeeping is per pair — drop entries for pairs that are no
+        // longer fixtures (e.g. after a tournament switch) so they can't linger.
+        reminderSent: Object.fromEntries(
+          Object.entries(existing.reminderSent || {}).filter(([k]) => validKeys.has(k))
+        )
       });
       audit(req, 'data.put', {
         resultsCount: Object.keys(incoming.results).length,
         scheduleCount: Object.keys(incoming.schedule).length,
-        liveCount: Object.keys(sanitizedLive).length
+        liveCount: Object.keys(sanitizedLive).length,
+        rosterReplaced: incoming.players !== undefined,
+        tournamentReplaced: incoming.tournament !== undefined,
+        archiveCount: archive.length
       });
       return json(res, 200, { ok: true });
     }
 
     // POST /api/players  → append a new player. Admin-only.
-    // Body: { name: "..." }. Name is trimmed, must be non-empty and unique.
+    // Body: { name: "...", group?: "<group name>" }. Name is trimmed, must be
+    // non-empty and unique. When the active tournament is split into groups a
+    // player can't exist outside one — `group` is then required, otherwise the
+    // new player would be on the roster with zero possible fixtures.
     if (url === '/api/players' && req.method === 'POST') {
       if (!checkAdmin(req)) return json(res, 401, { error: 'unauthorized' });
       const body = await readBody(req);
       let parsed;
       try { parsed = JSON.parse(body); }
       catch (e) { return json(res, 400, { error: 'invalid json' }); }
-      const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-      if (!name) return json(res, 400, { error: 'name required' });
-      if (name.length > 40) return json(res, 400, { error: 'name too long' });
-      // Match keys use "|" as separator — disallow it in player names.
-      if (name.includes('|')) return json(res, 400, { error: 'name cannot contain "|"' });
+      const nv = validatePlayerName(parsed.name);
+      if (!nv.ok) return json(res, 400, { error: nv.error });
+      const name = nv.name;
       const data = readData();
       if (data.players.includes(name)) return json(res, 409, { error: 'player exists' });
+
+      const groups = data.tournament && Array.isArray(data.tournament.groups)
+        ? data.tournament.groups : null;
+      let groupName = null;
+      if (groups && groups.length) {
+        groupName = typeof parsed.group === 'string' ? parsed.group.trim() : '';
+        if (!groupName) return json(res, 400, { error: 'group required' });
+        const g = groups.find(x => x.name === groupName);
+        if (!g) return json(res, 400, { error: 'no such group: ' + groupName });
+        data.tournament = {
+          ...data.tournament,
+          groups: groups.map(x => x.name === groupName
+            ? { ...x, players: [...x.players, name] }
+            : x)
+        };
+      }
+
       data.players = [...data.players, name];
       writeData(data);
-      audit(req, 'player.add', { name });
-      return json(res, 200, { ok: true, players: data.players });
+      audit(req, 'player.add', { name, group: groupName });
+      return json(res, 200, { ok: true, players: data.players, tournament: data.tournament });
     }
     if (url === '/api/players') {
       res.writeHead(405, { 'Allow': 'POST' });
@@ -994,7 +1247,7 @@ const server = http.createServer(async (req, res) => {
         // No body to await — readData → writeData runs synchronously, so no
         // other handler can interleave between the two and lose updates.
         const data = readData();
-        if (!buildValidKeys(data.players).has(key)) return json(res, 404, { error: 'no such match' });
+        if (!buildValidPairs(data).has(key)) return json(res, 404, { error: 'no such match' });
         if (data.live[key]) {
           delete data.live[key];
           writeData(data);
@@ -1020,7 +1273,7 @@ const server = http.createServer(async (req, res) => {
 
       // ---- atomic critical section (no awaits below) ----
       const data = readData();
-      if (!buildValidKeys(data.players).has(key)) return json(res, 404, { error: 'no such match' });
+      if (!buildValidPairs(data).has(key)) return json(res, 404, { error: 'no such match' });
       if (data.results[key]) return json(res, 409, { error: 'match already finished' });
       if (!isAdmin) {
         const sched = data.schedule[key];
@@ -1119,7 +1372,7 @@ const server = http.createServer(async (req, res) => {
 
       // ---- atomic critical section ----
       const data = readData();
-      if (!buildValidKeys(data.players).has(key)) return json(res, 404, { error: 'no such match' });
+      if (!buildValidPairs(data).has(key)) return json(res, 404, { error: 'no such match' });
       if (!isAdmin) {
         const sched = data.schedule[key];
         if (!sched) return json(res, 403, { error: 'match not scheduled' });
@@ -1308,6 +1561,12 @@ if (require.main === module) {
 module.exports = {
   // Pure helpers
   buildValidKeys,
+  buildValidPairs,
+  canonicalPair,
+  validatePlayerName,
+  validateRoster,
+  validateTournament,
+  validateArchive,
   clampInt,
   validateLiveBody,
   migratePlayerRename,

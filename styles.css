@@ -133,6 +133,16 @@ em { font-style: normal; color: var(--text-dim); font-size: 0.9em; }
   color: transparent;
 }
 
+/* Name of the tournament these standings belong to. Sits under the wordmark,
+   deliberately quiet — it's context, not a headline. */
+.hero-tournament {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
 .hero-stats {
   font-size: 12px;
   color: var(--text-dim);
@@ -1439,12 +1449,14 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   position: fixed;
   left: 0; right: 0; bottom: 0;
   display: grid;
-  /* Adapts to actual button count (4 after Мачове was merged into Двубои). */
+  /* Adapts to actual button count (5 with История; 4 before any tournament
+     has been archived, since that button is hidden until then). */
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  background: rgba(14,28,20,0.92);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  /* Near-opaque instead of translucent+blur. At 0.92 alpha the 20px blur was
+     already invisible, but it still forced a re-blur of the strip on every
+     scroll frame: p90 33ms → 16.7ms once removed. */
+  background: rgba(14,28,20,0.97);
   border-top: 1px solid var(--line);
   padding-bottom: var(--safe-bottom);
   z-index: 50;
@@ -1495,12 +1507,18 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 }
 
 /* ===== MODALS ===== */
+/* NOTE: deliberately NO backdrop-filter here.
+   A full-viewport backdrop-filter forces the browser to re-blur the entire
+   screen on every repaint that happens above it — including a plain :hover on
+   a button inside the modal. Measured on the wizard: 183ms per frame with the
+   blur vs 33ms without, i.e. hover feedback arriving ~6 frames late. The
+   0.65 black scrim already does all the visual separation work; the blur was
+   barely visible behind it. Same reason applies to .admin-menu-backdrop.
+   If a frosted look is ever wanted back, blur the SHEET, never the backdrop. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   z-index: 100;
   display: flex;
   align-items: flex-end;
@@ -3149,6 +3167,49 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 .standings-search input::placeholder { color: var(--text-faint); }
 .standings-search input:focus { outline: none; border-color: var(--accent); }
 
+/* ===== Group blocks =====
+   In group format the standings page is one block per group, each with its own
+   ranking. Without groups there's exactly one unnamed block, so these styles
+   are inert in the legacy flat format. */
+.standings-group + .standings-group { margin-top: 26px; }
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 2px 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.group-head-name {
+  font-family: 'Bebas Neue', Impact, sans-serif;
+  font-size: 1.15rem;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.group-head-count {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Small pill marking which group a player belongs to (duels cards). */
+.group-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(212,175,55,0.12);
+  border: 1px solid rgba(212,175,55,0.28);
+  color: var(--accent);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* List rows replace the old <table> — much friendlier on mobile and lets
    us put the W-L / sets / progress on a sub-line where they don't crowd. */
 .standings-list {
@@ -3386,6 +3447,11 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   .standings-inactive,
   .standings-search,
   .recent-section,
+  .group-head,
+  .history-link,
+  .history-tabs,
+  .history-head,
+  .history-results,
   .panel-head.panel-head-compact {
     max-width: 640px;
     margin-left: auto;
@@ -4038,15 +4104,17 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 }
 
 /* --- Bottom sheets (admin menu / about / match actions) --- */
+/* No backdrop-filter — see the note on .modal-backdrop. Measured here: 200ms
+   per frame while hovering a menu item, vs 16.7ms once the blur is gone. */
 .admin-menu-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(2px);
   z-index: 60;
 }
 .admin-menu-sheet,
 .admin-about-sheet,
+.admin-import-sheet,
 .admin-match-sheet,
 .admin-players-drawer {
   position: fixed;
@@ -4091,6 +4159,27 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   width: 100%;
 }
 .admin-menu-item:hover, .admin-menu-item:active { background: var(--bg-2); }
+/* Задържането върху „Експорт“ отваря скрития импорт. Лентата се появява САМО
+   докато пръстът стои натиснат — не подсказва жеста предварително, но потвърждава
+   че се случва нещо, вместо тапът да изглежда заял. Времето = IMPORT_HOLD_MS. */
+.admin-menu-item.holding {
+  position: relative;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.admin-menu-item.holding::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 0;
+  background: var(--loss);
+  animation: import-hold 1.5s linear forwards;
+}
+@keyframes import-hold { to { width: 100%; } }
 .admin-menu-item.danger { color: var(--loss); }
 .admin-menu-item.danger:hover { background: var(--loss-bg); }
 .admin-menu-item .mi-icon {
@@ -4115,7 +4204,8 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 }
 
 /* --- About sheet --- */
-.admin-about-sheet h3 {
+.admin-about-sheet h3,
+.admin-import-sheet h3 {
   padding: 0 14px 8px;
   font-size: 18px;
   font-weight: 800;
@@ -4142,7 +4232,8 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   font-weight: 500;
   word-break: break-all;
 }
-.admin-about-sheet .btn-ghost.full { margin: 4px 8px; }
+.admin-about-sheet .btn-ghost.full,
+.admin-import-sheet .btn-ghost.full { margin: 4px 8px; }
 
 /* --- Players drawer (v2) --- */
 .admin-players-drawer {
@@ -4199,6 +4290,21 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   border-color: var(--accent);
   background: var(--bg-1);
 }
+/* Group picker, shown only when the tournament is split. Kept narrow so the
+   name input still dominates the row on a phone. */
+.add-player-group {
+  flex: 0 0 auto;
+  max-width: 40%;
+  padding: 11px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+}
+.add-player-group:focus { outline: none; border-color: var(--accent); }
+
 .add-player-submit {
   width: 44px;
   flex-shrink: 0;
@@ -4426,9 +4532,13 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
 .btn-danger-solid:active { transform: scale(0.97); }
 
 @media (min-width: 720px) {
+  /* Centered via auto inline margins, NOT translateX(-50%) — Alpine's
+     x-transition writes an inline `transform: scale(...)` for the duration of
+     the enter/leave animation, which would clobber a transform-based centering
+     and make the sheet pop in off-centre before snapping into place. */
   .player-delete-sheet {
-    left: 50%; right: auto; bottom: 32px;
-    transform: translateX(-50%);
+    left: 0; right: 0; bottom: 32px;
+    margin-inline: auto;
     width: min(420px, 92vw);
     border-radius: 18px;
     border: 1px solid var(--line-strong);
@@ -4465,16 +4575,167 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   .admin-section-body { padding: 6px 14px 14px; }
   .admin-match-v2 { padding: 12px 14px; }
   .admin-match-v2 .match-vs { font-size: 15px; }
+  /* Centered via auto inline margins, NOT translateX(-50%) — see the note on
+     .player-delete-sheet above: Alpine's x-transition sets an inline
+     `transform: scale(...)` while animating, which overrides a transform-based
+     centering. The sheet would render at left:50% (visibly right of centre) for
+     the length of the transition, then jump to the middle when Alpine strips
+     the inline style. Auto margins are immune because they aren't a transform. */
   .admin-menu-sheet,
   .admin-about-sheet,
+  .admin-import-sheet,
   .admin-match-sheet,
   .admin-players-drawer {
-    left: 50%;
-    right: auto;
+    left: 0;
+    right: 0;
     bottom: 32px;
-    transform: translateX(-50%);
+    margin-inline: auto;
     width: min(480px, 92vw);
     border-radius: 18px;
     border: 1px solid var(--line-strong);
   }
+}
+
+/* ===================================================================
+   HISTORY — archived tournaments
+   Read-only view. Reuses .standings-row / .standings-group wholesale;
+   only the chrome around them is new.
+   =================================================================== */
+
+/* Teaser at the bottom of the standings page. */
+.history-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 22px;
+  padding: 13px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.history-link:hover, .history-link:active {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+}
+.history-link .hl-icon { font-size: 20px; flex-shrink: 0; }
+.history-link .hl-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.history-link .hl-title { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+.history-link .hl-sub {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-link .hl-chev { color: var(--text-faint); font-size: 18px; flex-shrink: 0; }
+
+/* Switcher — only rendered when more than one tournament is archived. */
+.history-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 14px;
+  -webkit-overflow-scrolling: touch;
+}
+.history-tab {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.history-tab.active {
+  background: rgba(212,175,55,0.12);
+  border-color: rgba(212,175,55,0.4);
+  color: var(--accent);
+}
+
+.history-head { margin-bottom: 16px; }
+.history-title {
+  font-family: 'Bebas Neue', Impact, sans-serif;
+  font-size: 1.5rem;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+.history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
+/* Archived rows aren't clickable — kill the affordances .standings-row has. */
+.standings-row.static { cursor: default; }
+.standings-row.static:hover, .standings-row.static:active { background: var(--bg-1); }
+
+.history-results { margin-top: 24px; }
+.history-results-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+}
+.history-result-row {
+  display: grid;
+  grid-template-columns: 54px 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+.history-result-row:last-child { border-bottom: none; }
+.history-result-row .hr-date { color: var(--text-faint); font-size: 0.7rem; white-space: nowrap; }
+.history-result-row .hr-winner { color: var(--win); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.history-result-row .hr-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.history-result-row .hr-loser { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 380px) {
+  .history-result-row { grid-template-columns: 46px 1fr auto 1fr; font-size: 0.78rem; gap: 6px; }
+}
+
+/* ===== Import sheet =====
+   A full-state overwrite deserves a screen, not a menu row. */
+.import-warning {
+  background: rgba(224,124,138,0.10);
+  border: 1px solid rgba(224,124,138,0.30);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 4px 8px 14px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.import-warning p { margin: 0 0 8px; }
+.import-warning p:last-child { margin-bottom: 0; }
+.import-warning strong { color: var(--text); }
+.import-warning .import-tip { color: var(--accent); }
+.import-warning .import-tip strong { color: var(--accent); }
+
+/* Same horizontal inset as the sheet's .btn-ghost.full siblings, so all three
+   buttons line up instead of the danger one bleeding past the edges. */
+.import-pick {
+  display: block;
+  margin: 4px 8px;
+  text-align: center;
 }

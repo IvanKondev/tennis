@@ -41,7 +41,7 @@ COPY manifest.webmanifest og.png og.svg favicon.svg apple-touch-icon.png ./publi
 
 ### 4. Did I add a new API endpoint? → check key validation + audit
 
-All match-key-bearing endpoints **must** validate against `buildValidKeys(data.players)` (server.js). The whitelist is derived dynamically from the current player roster. Existing endpoints that do this:
+All match-key-bearing endpoints **must** validate against `buildValidPairs(data)` (server.js) — **not** `buildValidKeys(players)`. `buildValidPairs` is tournament-format aware: with a group split it only allows within-group pairs (plus `tournament.extraPairs`), so a cross-group result is a 404. `buildValidKeys` is the flat round-robin primitive it falls back to; use it directly only for archived snapshots. Existing endpoints that validate:
 - `POST /api/match/<key>/live`
 - `DELETE /api/match/<key>/live`
 - `POST /api/match/<key>/result`
@@ -61,6 +61,31 @@ Push-notification endpoints (no key validation needed — they store browser sub
 
 The data file at `/data/tennis.json` is shared across all clients. New fields are safe (server uses `|| {}` defaults). Removing or renaming fields requires a migration step in `readData()` in server.js.
 
+### 5a. Tournament format + history
+
+Two top-level fields carry the tournament structure:
+
+```jsonc
+"tournament": {                      // null = flat round-robin over the whole roster
+  "name": "Турнир лято 2026",
+  "groups": [                        // null/absent = no group split
+    { "name": "Група 1", "players": ["Сашо","Белев","Иво","Емо","Лебанов"] },
+    { "name": "Група 2", "players": ["Никата","Нако","Гого","Вики","Моцко"] }
+  ],
+  "extraPairs": []                   // knockout fixtures outside the group stage
+},
+"archive": [ { "id", "name", "endedAt", "players", "results", "resultsRecordedAt", "groups" } ]
+```
+
+- **Fixtures = within-group pairs ∪ `extraPairs`.** Starting the winners' final is a *data* change (append `"Сашо|Никата"` to `extraPairs`), never a code change.
+- **Standings are per group and rank within the group.** Only `stage: 'group'` matches count — a knockout result doesn't move a group table. See `computeStandings()` / `buildMatches()` at the top of `app.js` (module scope, so the history view reuses them verbatim).
+- **Every view that lists opponents must go through `rosterFor(name)`**, not `this.players`. Iterating the full roster makes cross-group players show up as unplayed fixtures that don't exist. Call sites: `duelOpponents`, `duelOpponentsGrouped`, `h2hRowSummary`, `wizardOpponents`, `duelProgressRate/Label`.
+- **`archive` is frozen.** Each snapshot carries its **own** `players` array, because canonical key order depends on roster position — `"Иво|Сашо"` is correct under last season's 21-player list even though today's roster would canonicalize it as `"Сашо|Иво"`. `migratePlayerRename`/`migratePlayerDelete` rewrite `tournament` but **never** touch `archive`.
+- **`PUT /api/data` is also the Import/restore path.** `players`, `tournament` and `archive` are optional: omitted → inherited from disk (normal score write); supplied → full replacement, validated by `validateRoster` / `validateTournament` / `validateArchive`.
+- **`POST /api/players` requires `group`** when a split is active, else the new player lands on the roster with zero possible fixtures.
+
+Switching tournaments is a **manual, explicit** operation — export, transform, import. There is no "end tournament" button and no implicit migration on load.
+
 ### 6. Did I change a feature non-admin users use on match-day?
 
 Two endpoints allow non-admin writes when `schedule[key]` is today:
@@ -71,10 +96,10 @@ Both auto-clean `schedule[key]` and `live[key]` on finalize. If you add a third 
 
 ## Architecture quick reference (for code changes)
 
-- **Single Alpine component** `tennisApp` in `app.js` — all state and methods live here.
+- **Single Alpine component** `tennisApp` in `app.js` — all state and methods live here. Exception: `tournamentPairs` / `buildMatches` / `computeStandings` sit at module scope above it, so the same code computes the live tournament and any archived snapshot.
 - **Derived state** (`matches`, `standings`, etc.) is recomputed via `recomputeDerived()` triggered by `$watch('results')` and `$watch('schedule')`. Don't add getters that iterate over all matches — use derived state.
 - **Player roster lives in `/data/tennis.json`** (`data.players` field). `data.js`'s `PLAYERS` array is only a bootstrap default used when the data file has no `players` field yet. The admin "Add player" UI POSTs to `/api/players`; the server is authoritative. `MATCHES_SEED` in `data.js` is similarly bootstrap-only — match pairs are generated dynamically from `this.players` in `recomputeDerived`.
-- **Canonical pair keys**: `"P1|P2"` where P1 comes before P2 in the player list. Build keys from `match.key`, never from raw user input. Server validates incoming keys against `buildValidKeys(data.players)` on every write.
+- **Canonical pair keys**: `"P1|P2"` where P1 comes before P2 in the player list. Build keys from `match.key`, never from raw user input. Server validates incoming keys against `buildValidPairs(data)` on every write.
 - **Mutation must reassign**: Alpine watchers fire on reassignment, not mutation. Use `this.results = { ...this.results, [key]: ... }`, not `this.results[key] = ...`.
 - **Anti-loop flag**: `_fromServer = true` before applying server data, cleared in microtask. `persist()` bails if set.
 - **Two-mode backend**: `backendMode = 'api'` (server) or `'local'` (localStorage). Detected at boot via `/api/health`. Same code runs in both.
