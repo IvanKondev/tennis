@@ -92,7 +92,13 @@ function computeStandings(players, matches) {
     if (y.setsWon !== x.setsWon) return y.setsWon - x.setsWon;
     return x.name.localeCompare(y.name, 'bg');
   });
-  list.forEach((s, idx) => { s.rank = idx + 1; });
+  // A position is only meaningful once you've played. A 0-0 player sorts above
+  // someone who lost (same points, better set difference), so numbering the
+  // whole list would both rank people who haven't shown up and leave holes in
+  // what's actually displayed — "1 … 5" in a five-man group with two matches
+  // played. Unplayed rows get rank null; every view renders a dash for them.
+  let pos = 0;
+  list.forEach(s => { s.rank = s.played > 0 ? ++pos : null; });
   return list;
 }
 
@@ -932,54 +938,36 @@ document.addEventListener('alpine:init', () => {
       return this.standings.filter(s => s.name.toLowerCase().includes(q));
     },
 
-    // Standings split into "active" (played ≥ 1) and "inactive" (0 played).
-    // Inactive players are visually de-emphasized and shown under a
-    // separator at the bottom — same pattern as the duels view. Search
-    // applies to both lists so a typed query filters everything.
-    get standingsActive() {
-      const q = (this.duelSearch || '').trim().toLowerCase();
-      const list = this.standings.filter(s => s.played > 0);
-      return q ? list.filter(s => s.name.toLowerCase().includes(q)) : list;
-    },
-    get standingsInactive() {
-      const q = (this.duelSearch || '').trim().toLowerCase();
-      const list = this.standings.filter(s => !s.played);
-      const sorted = list.slice().sort((a, b) => a.name.localeCompare(b.name, 'bg'));
-      return q ? sorted.filter(s => s.name.toLowerCase().includes(q)) : sorted;
-    },
-
-    // The same active/inactive split, but one bucket per group — this is what
-    // the standings view renders. A single {name: null} entry when the
-    // tournament isn't split, so the markup is identical in both formats.
+    // One bucket per group — this is what the standings view renders. A single
+    // {name: null} entry when the tournament isn't split, so the markup is
+    // identical in both formats. Search filters every bucket.
+    //
+    // Players with zero matches render as ordinary rows showing 0s, appended
+    // after everyone who has played (alphabetically among themselves). They
+    // get a dash for the position and no medal accent — having played nothing
+    // isn't a placement — but otherwise they look exactly like every other row.
     get standingsGroupsView() {
       const q = (this.duelSearch || '').trim().toLowerCase();
       const hit = s => !q || s.name.toLowerCase().includes(q);
       const byName = (a, b) => a.name.localeCompare(b.name, 'bg');
       return this.standingsByGroup.map(g => {
-        // Before the first match of a group there is nothing to rank, and
-        // dumping the whole lineup under a "no matches" separator reads as an
-        // empty page. Show it as a plain starting lineup instead.
         const started = g.rows.some(s => s.played > 0);
-        if (!started) {
-          return {
-            name: g.name,
-            started: false,
-            active: g.rows.filter(hit).slice().sort(byName),
-            inactive: []
-          };
-        }
+        const rows = g.rows.filter(hit);
         return {
           name: g.name,
-          started: true,
-          active: g.rows.filter(s => s.played > 0 && hit(s)),
-          inactive: g.rows.filter(s => !s.played && hit(s)).sort(byName)
+          started,
+          // Before a group's first match there's nothing to rank at all, so
+          // the whole lineup is just alphabetical.
+          rows: started
+            ? [...rows.filter(s => s.played > 0), ...rows.filter(s => !s.played).sort(byName)]
+            : rows.slice().sort(byName)
         };
       });
     },
 
     // True when a search query matched nobody in any group.
     get standingsNoMatches() {
-      return this.standingsGroupsView.every(g => !g.active.length && !g.inactive.length);
+      return this.standingsGroupsView.every(g => !g.rows.length);
     },
 
     // Group opponents by status for the expanded card. Sorted within each

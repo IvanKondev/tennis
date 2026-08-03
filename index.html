@@ -340,20 +340,20 @@
             <div class="group-head">
               <span class="group-head-name" x-text="g.name"></span>
               <span class="group-head-count">
-                <span x-show="!g.started">още не е започнала · </span><span x-text="g.active.length + g.inactive.length"></span> играчи
+                <span x-show="!g.started">още не е започнала · </span><span x-text="g.rows.length"></span> играчи
               </span>
             </div>
           </template>
 
-          <!-- Played players ranked, top-3 with medal accents. Before a group's
-               first match there's nothing to rank — the whole lineup renders
-               here, alphabetically, with a dash for the position. -->
+          <!-- Everyone in the group, one row shape for all: played players
+               ranked (top-3 with medal accents), then those with no matches
+               yet — same row, all zeros, a dash for the position. -->
           <div class="standings-list">
-            <template x-for="(s, i) in g.active" :key="s.name">
+            <template x-for="(s, i) in g.rows" :key="s.name">
               <div class="standings-row"
-                   :class="{['podium-' + (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '')]: i < 3 && g.started}"
+                   :class="{['podium-' + (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '')]: i < 3 && g.started && s.played > 0}"
                    @click="jumpToPlayer(s.name)">
-                <span class="sr-rank" x-text="g.started ? s.rank : '—'"></span>
+                <span class="sr-rank" x-text="g.started && s.played > 0 ? s.rank : '—'"></span>
                 <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
                 <div class="sr-info">
                   <span class="sr-name" x-text="s.name"></span>
@@ -373,28 +373,6 @@
               </div>
             </template>
           </div>
-
-          <!-- Inactive players (0 played) — separator + dim rows. -->
-          <template x-if="g.inactive.length > 0">
-            <div class="standings-inactive">
-              <div class="standings-sep">
-                <span class="ss-line"></span>
-                <span class="ss-label">Без мачове · <span x-text="g.inactive.length"></span></span>
-                <span class="ss-line"></span>
-              </div>
-              <template x-for="s in g.inactive" :key="s.name">
-                <div class="standings-row dim" @click="jumpToPlayer(s.name)">
-                  <span class="sr-rank">—</span>
-                  <span class="avatar sm" :style="`--avatar-hue:${playerHue(s.name)}`" x-text="initials(s.name)"></span>
-                  <div class="sr-info">
-                    <span class="sr-name" x-text="s.name"></span>
-                    <span class="sr-meta">няма мачове</span>
-                  </div>
-                  <span class="sr-chev">›</span>
-                </div>
-              </template>
-            </div>
-          </template>
         </div>
       </template>
 

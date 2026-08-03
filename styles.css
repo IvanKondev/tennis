@@ -484,7 +484,11 @@ main {
   color: var(--text);
 }
 .upcoming-player:active { background: var(--bg-2); }
-.upcoming-player.right { justify-content: flex-end; flex-direction: row-reverse; }
+/* Mirror of the left block: name then avatar, flush to the outer edge. With
+   row-reverse the main axis runs right-to-left, so flex-START is the visual
+   right — flex-end would park the pair next to the VS and leave the two sides
+   visibly off-centre. */
+.upcoming-player.right { justify-content: flex-start; flex-direction: row-reverse; }
 .upcoming-name {
   white-space: nowrap;
   overflow: hidden;
@@ -507,8 +511,9 @@ main {
     gap: 6px;
     font-size: 13px;
     padding: 4px 2px;
+    justify-content: center;
   }
-  .upcoming-player.right { flex-direction: column; }
+  .upcoming-player.right { flex-direction: column; justify-content: center; }
   .upcoming-name {
     white-space: normal;
     word-break: break-word;
@@ -761,7 +766,8 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   transition: background 0.12s ease;
 }
 .match-player:active { background: var(--bg-2); }
-.match-player.right { justify-content: flex-end; flex-direction: row-reverse; }
+/* row-reverse flips the main axis — flex-start is the visual right edge. */
+.match-player.right { justify-content: flex-start; flex-direction: row-reverse; }
 .match-player .name {
   font-weight: 600;
   font-size: 14px;
@@ -3322,32 +3328,6 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   line-height: 1;
 }
 
-/* Inactive (0-played) section — separator + dim rows. */
-.standings-inactive { margin-top: 16px; }
-.standings-sep {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 4px 10px;
-}
-.standings-sep .ss-line {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-.standings-sep .ss-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-.standings-row.dim {
-  opacity: 0.55;
-  background: transparent;
-}
-.standings-row.dim .sr-meta { font-style: italic; color: var(--text-faint); }
-
 /* Compact recent results — one-liner per match in a collapsible details. */
 .recent-section {
   margin-top: 20px;
@@ -3444,7 +3424,6 @@ input[type="time"], input[type="date"], input[type="datetime-local"] { border-ra
   /* Cap single-column elements on wide screens so they don't stretch into
      awkward landscape rows. Cards in Двубои use the multi-column grid. */
   .standings-list,
-  .standings-inactive,
   .standings-search,
   .recent-section,
   .group-head,
